@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { ShellProfile, TerminalSession } from '../types';
+import { AgentType, ShellProfile, TerminalSession } from '../types';
 import { tauriIpc } from '../lib/tauriIpc';
 
 interface TerminalState {
@@ -9,10 +9,8 @@ interface TerminalState {
   splitMode: 'none' | 'vertical' | 'horizontal';
   profiles: ShellProfile[];
   defaultProfileId: string;
-  recentDirectories: string[];
 
   // Actions
-  addRecentDirectory: (dir: string) => void;
   createSession: (params?: {
     shell?: string;
     title?: string;
@@ -20,15 +18,22 @@ interface TerminalState {
     args?: string[];
     worktreeId?: string;
     isAgent?: boolean;
-    agentType?: string;
+    agentType?: AgentType | null;
   }) => Promise<TerminalSession>;
   closeSession: (id: string) => Promise<void>;
+  markSessionExited: (id: string) => void;
   setActiveSession: (id: string) => void;
   setSecondarySession: (id: string | null) => void;
   setSplitMode: (mode: 'none' | 'vertical' | 'horizontal') => void;
   fetchProfiles: () => Promise<void>;
   renameSession: (id: string, newTitle: string) => void;
 }
+
+// Drop the retired recent-directory history from older builds
+try {
+  localStorage.removeItem('vela_recent_dirs');
+  localStorage.removeItem('orca_recent_dirs');
+} catch {}
 
 export const useTerminalStore = create<TerminalState>((set, get) => ({
   sessions: [],
@@ -37,28 +42,6 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   splitMode: 'none',
   profiles: [],
   defaultProfileId: 'pwsh',
-  recentDirectories: (() => {
-    try {
-      const saved = localStorage.getItem('vela_recent_dirs') || localStorage.getItem('orca_recent_dirs');
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  })(),
-
-  addRecentDirectory: (dir: string) => {
-    if (!dir || dir.trim() === '') return;
-    const cleanDir = dir.trim().replace(/\\/g, '/');
-    set((state) => {
-      const filtered = state.recentDirectories.filter((d) => d !== cleanDir);
-      const updated = [cleanDir, ...filtered].slice(0, 6);
-      try {
-        localStorage.setItem('vela_recent_dirs', JSON.stringify(updated));
-      } catch {}
-      return { recentDirectories: updated };
-    });
-  },
-
   createSession: async (params = {}) => {
     const { sessions, profiles, defaultProfileId } = get();
 
@@ -66,8 +49,16 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       profiles.find((p) => p.id === defaultProfileId) || profiles[0];
 
     const shell = params.shell || selectedProfile?.executable || 'powershell.exe';
-    const args = params.args || selectedProfile?.args || [];
-    const isAgent = params.isAgent ?? selectedProfile?.is_agent ?? false;
+    const shellProfile = profiles.find(
+      (profile) => profile.executable.toLowerCase() === shell.toLowerCase()
+    );
+    const args =
+      params.args ??
+      shellProfile?.args ??
+      (shell.toLowerCase() === 'claude'
+        ? ['--dangerously-skip-permissions']
+        : selectedProfile?.args ?? []);
+    const isAgent = params.isAgent ?? shellProfile?.is_agent ?? selectedProfile?.is_agent ?? false;
 
     const id = `term-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
     const title =
@@ -87,11 +78,11 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       rows: 24,
       worktreeId: params.worktreeId,
       isAgent,
-      agentType: params.agentType,
+      agentType: params.agentType ?? shellProfile?.agent_type,
     });
 
     set((state) => ({
-      sessions: [...state.sessions, newSession],
+      sessions: [...state.sessions, { ...newSession, exited: false }],
       activeSessionId: newSession.id,
     }));
 
@@ -121,6 +112,14 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         splitMode: nextSecondary ? state.splitMode : 'none',
       };
     });
+  },
+
+  markSessionExited: (id: string) => {
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === id ? { ...session, exited: true } : session
+      ),
+    }));
   },
 
   setActiveSession: (id: string) => {

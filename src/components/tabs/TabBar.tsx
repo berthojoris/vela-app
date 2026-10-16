@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useTerminalStore } from '../../stores/useTerminalStore';
 import { NewTabDropdown } from './NewTabDropdown';
-import { X, Terminal, Bot, Columns2, Rows2, Square } from 'lucide-react';
+import { TerminalIcon } from '../terminal/TerminalIcon';
+import { X, Columns2, Rows2, Square } from 'lucide-react';
 
 interface TabBarProps {
   onOpenTerminalModal: () => void;
@@ -22,6 +23,14 @@ export const TabBar: React.FC<TabBarProps> = ({ onOpenTerminalModal }) => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
 
+  const handleCloseSession = useCallback(async (id: string) => {
+    try {
+      await closeSession(id);
+    } catch (err: any) {
+      alert(`Failed to close terminal: ${err.message || err}`);
+    }
+  }, [closeSession]);
+
   // Global Ctrl+T shortcut: opens Directory & Launch Modal
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -31,13 +40,13 @@ export const TabBar: React.FC<TabBarProps> = ({ onOpenTerminalModal }) => {
       } else if (e.ctrlKey && e.key.toLowerCase() === 'w') {
         e.preventDefault();
         if (activeSessionId) {
-          closeSession(activeSessionId);
+          void handleCloseSession(activeSessionId);
         }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [activeSessionId, onOpenTerminalModal, closeSession]);
+  }, [activeSessionId, onOpenTerminalModal, handleCloseSession]);
 
   const handleStartRename = (id: string, currentTitle: string) => {
     setEditingId(id);
@@ -64,6 +73,7 @@ export const TabBar: React.FC<TabBarProps> = ({ onOpenTerminalModal }) => {
               key={session.id}
               onClick={() => setActiveSession(session.id)}
               onDoubleClick={() => handleStartRename(session.id, session.title)}
+              title={session.exited ? `${session.title} — Process completed` : session.title}
               className={`group h-7 px-2.5 rounded flex items-center gap-2 text-xs cursor-pointer transition-all border shrink-0 max-w-[190px] ${
                 isActive
                   ? 'bg-orca-card border-orca-borderLight text-white font-medium shadow-sm'
@@ -72,10 +82,18 @@ export const TabBar: React.FC<TabBarProps> = ({ onOpenTerminalModal }) => {
                   : 'bg-transparent border-transparent text-orca-muted hover:text-orca-text hover:bg-orca-hover'
               }`}
             >
-              {session.is_agent ? (
-                <Bot className="w-3.5 h-3.5 text-orca-emerald shrink-0" />
-              ) : (
-                <Terminal className="w-3.5 h-3.5 text-orca-muted shrink-0" />
+              <TerminalIcon
+                shell={session.shell}
+                title={session.title}
+                isAgent={session.is_agent}
+                agentType={session.agent_type as any}
+                className="w-3.5 h-3.5 shrink-0"
+              />
+              {session.exited && (
+                <span
+                  className="w-1.5 h-1.5 rounded-full bg-orca-muted shrink-0"
+                  aria-label="Process completed"
+                />
               )}
 
               {editingId === session.id ? (
@@ -96,7 +114,7 @@ export const TabBar: React.FC<TabBarProps> = ({ onOpenTerminalModal }) => {
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  closeSession(session.id);
+                  void handleCloseSession(session.id);
                 }}
                 className="opacity-0 group-hover:opacity-100 hover:bg-orca-hover hover:text-orca-rose rounded p-0.5 transition-all text-orca-muted"
                 title="Close Tab (Ctrl+W)"

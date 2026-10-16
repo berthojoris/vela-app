@@ -16,6 +16,13 @@
 
 There is **no test suite, no eslint/prettier/rustfmt/clippy config, and no CI** in this repo. Don't claim tests pass; validate with `tsc`/`vite build` and `cargo check`.
 
+## Definition of done — always build the release `.exe`
+
+- **Every task that changes code must end with a release build**: run `npx @tauri-apps/cli build --no-bundle` from the repo root as the final step, after `tsc`/`vite build` and `cargo check` are clean.
+- The output is `src-tauri/target/release/vela.exe`. Confirm the build succeeded and the exe's timestamp was updated before reporting the task done.
+- If the build fails, fix it (or report the exact error output) — don't hand back a task with a broken release build. If `vela.exe` is locked because the app is running, say so and ask the user to close it rather than killing the process.
+- Docs-only changes (e.g. `*.md`) don't need a rebuild.
+
 ## Layout
 
 - `src-tauri/src/lib.rs` — **all** `#[tauri::command]` definitions + `generate_handler!` registration + `run()`.
@@ -52,4 +59,4 @@ There is **no test suite, no eslint/prettier/rustfmt/clippy config, and no CI** 
 - Tailwind tokens are the `orca-*` / `vela-*` palettes in `tailwind.config.js` (e.g. `bg-orca-darkest`, `text-orca-muted`, `border-orca-border`). `index.css` sets the base border/scrollbar styling.
 - **Universal zero-shadow flat UI**: 1px borders, no `box-shadow`/elevation blur. Dark-only (`darkMode: "class"`, `class="dark"` on `<html>`). Match surrounding components when adding UI.
 - Terminal rendering uses `@xterm/xterm` with the WebGL addon and a try/catch canvas/DOM fallback (`XTermView.tsx`); scrollback is capped at 5000 to bound WebView2 memory. Keep both.
-- `App.tsx` shows a ~3.5s splash on every launch and initializes repo detection from `window.location.pathname` — expect these on startup.
+- `App.tsx` shows a ~3.5s splash on every launch; panel starts clean with no active terminals or worktree history (synchronized dynamically per active terminal session).

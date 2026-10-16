@@ -2,16 +2,14 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Folder,
   FolderOpen,
-  FolderGit2,
-  GitBranch,
   Terminal,
   Bot,
-  Sparkles,
   X,
-  History,
   Columns2,
   Check,
+  Loader2,
 } from 'lucide-react';
+import { TerminalIcon } from '../terminal/TerminalIcon';
 import { useTerminalStore } from '../../stores/useTerminalStore';
 import { useWorktreeStore } from '../../stores/useWorktreeStore';
 import { tauriIpc } from '../../lib/tauriIpc';
@@ -32,8 +30,6 @@ export const OpenTerminalModal: React.FC<OpenTerminalModalProps> = ({
   const {
     profiles,
     createSession,
-    recentDirectories,
-    addRecentDirectory,
     setSplitMode,
     sessions,
     defaultProfileId,
@@ -45,16 +41,17 @@ export const OpenTerminalModal: React.FC<OpenTerminalModalProps> = ({
   const [targetDir, setTargetDir] = useState('');
   const [selectedProfileId, setSelectedProfileId] = useState('pwsh');
   const [openInSplit, setOpenInSplit] = useState(false);
+  const [isBrowsing, setIsBrowsing] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const wasOpenRef = useRef(false);
 
-  // Set default initial directory when modal opens
+  // Set default initial directory ONLY when modal transitions from closed to open
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && !wasOpenRef.current) {
       const defaultDir =
         initialDirectory ||
         activeWorktree?.path ||
         repoPath ||
-        recentDirectories[0] ||
         '';
       setTargetDir(defaultDir);
 
@@ -62,7 +59,7 @@ export const OpenTerminalModal: React.FC<OpenTerminalModalProps> = ({
         setSelectedProfileId(initialProfileId);
       } else if (defaultProfileId) {
         setSelectedProfileId(defaultProfileId);
-      } else if (profiles.length > 0 && !selectedProfileId) {
+      } else if (profiles.length > 0) {
         setSelectedProfileId(profiles[0].id);
       }
 
@@ -71,28 +68,32 @@ export const OpenTerminalModal: React.FC<OpenTerminalModalProps> = ({
         inputRef.current?.select();
       }, 50);
     }
-  }, [isOpen, initialDirectory, initialProfileId, activeWorktree, repoPath, profiles, defaultProfileId]);
+    wasOpenRef.current = isOpen;
+  }, [isOpen, initialDirectory, initialProfileId]);
 
   if (!isOpen) return null;
 
   const handleBrowseFolder = async () => {
+    if (isBrowsing) return;
+    setIsBrowsing(true);
     try {
-      const selected = await tauriIpc.selectDirectory();
+      const selected = await tauriIpc.selectDirectory({
+        title: 'Select Directory for Terminal',
+        defaultPath: targetDir || repoPath || undefined,
+      });
       if (selected) {
         setTargetDir(selected);
       }
     } catch (err) {
       console.error('Failed to open directory dialog', err);
+    } finally {
+      setIsBrowsing(false);
     }
   };
 
   const handleLaunch = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const finalDir = targetDir.trim();
-
-    if (finalDir) {
-      addRecentDirectory(finalDir);
-    }
 
     const profile =
       profiles.find((p) => p.id === selectedProfileId) || profiles[0];
@@ -106,11 +107,21 @@ export const OpenTerminalModal: React.FC<OpenTerminalModalProps> = ({
       title = `${profile?.name || 'Term'} (${folderName})`;
     }
 
+    let matchedWorktreeId: string | undefined = undefined;
+    if (finalDir) {
+      const normFinal = finalDir.trim().replace(/\\/g, '/').toLowerCase();
+      const wt = worktrees.find(
+        (w) => w.path.trim().replace(/\\/g, '/').toLowerCase() === normFinal
+      );
+      if (wt) matchedWorktreeId = wt.id;
+    }
+
     const newSession = await createSession({
       shell: profile?.executable,
       args: profile?.args,
       title,
       cwd: finalDir,
+      worktreeId: matchedWorktreeId,
       isAgent: profile?.is_agent,
       agentType: profile?.agent_type as any,
     });
@@ -177,120 +188,23 @@ export const OpenTerminalModal: React.FC<OpenTerminalModalProps> = ({
               <button
                 type="button"
                 onClick={handleBrowseFolder}
-                className="h-8 px-3 rounded-md bg-orca-card hover:bg-orca-hover border border-orca-border text-orca-text hover:text-white flex items-center gap-1.5 font-medium transition-colors"
+                disabled={isBrowsing}
+                aria-busy={isBrowsing}
+                aria-label={isBrowsing ? 'Browsing for directory' : 'Browse for directory'}
+                className="h-8 px-3 rounded-md bg-orca-card hover:bg-orca-hover border border-orca-border text-orca-text hover:text-white flex items-center gap-1.5 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-orca-card disabled:hover:text-orca-text"
                 title="Browse Windows Folder..."
               >
-                <FolderOpen className="w-3.5 h-3.5 text-orca-accent" />
+                {isBrowsing ? (
+                  <Loader2 className="w-3.5 h-3.5 text-orca-accent animate-spin" />
+                ) : (
+                  <FolderOpen className="w-3.5 h-3.5 text-orca-accent" />
+                )}
                 <span>Browse</span>
               </button>
             </div>
           </div>
 
-          {/* 2. Quick Directory Presets */}
-          <div>
-            <span className="text-[10px] uppercase font-mono font-semibold text-orca-muted tracking-wider block mb-1.5">
-              Quick Directory Presets
-            </span>
-
-            <div className="space-y-1 max-h-36 overflow-y-auto pr-1">
-              {/* Active Worktree */}
-              {activeWorktree && (
-                <button
-                  type="button"
-                  onClick={() => setTargetDir(activeWorktree.path)}
-                  className={`w-full px-2.5 py-1.5 rounded-md flex items-center justify-between border text-left transition-colors ${
-                    targetDir === activeWorktree.path
-                      ? 'bg-orca-accent/15 border-orca-accent/50 text-white font-medium'
-                      : 'bg-orca-card/30 border-orca-border hover:bg-orca-card text-orca-text'
-                  }`}
-                >
-                  <div className="flex items-center gap-2 truncate">
-                    <GitBranch className="w-3.5 h-3.5 text-orca-emerald shrink-0" />
-                    <span className="truncate">{activeWorktree.branch}</span>
-                    <span className="text-[9px] bg-orca-emerald/10 text-orca-emerald px-1.5 py-0.5 rounded border border-orca-emerald/30 font-mono">
-                      Active Worktree
-                    </span>
-                  </div>
-                  <span className="text-[10px] text-orca-muted font-mono truncate max-w-[150px]">
-                    {activeWorktree.name}
-                  </span>
-                </button>
-              )}
-
-              {/* Main Git Repository */}
-              {repoPath && (
-                <button
-                  type="button"
-                  onClick={() => setTargetDir(repoPath)}
-                  className={`w-full px-2.5 py-1.5 rounded-md flex items-center justify-between border text-left transition-colors ${
-                    targetDir === repoPath
-                      ? 'bg-orca-accent/15 border-orca-accent/50 text-white font-medium'
-                      : 'bg-orca-card/30 border-orca-border hover:bg-orca-card text-orca-text'
-                  }`}
-                >
-                  <div className="flex items-center gap-2 truncate">
-                    <FolderGit2 className="w-3.5 h-3.5 text-orca-accent shrink-0" />
-                    <span className="truncate font-semibold">
-                      {repoPath.split('/').pop() || 'Repository'}
-                    </span>
-                    <span className="text-[9px] bg-orca-card text-orca-muted px-1.5 py-0.5 rounded border border-orca-border font-mono">
-                      Repo Root
-                    </span>
-                  </div>
-                  <span className="text-[10px] text-orca-muted font-mono truncate max-w-[150px]">
-                    {repoPath}
-                  </span>
-                </button>
-              )}
-
-              {/* Other Worktrees */}
-              {worktrees
-                .filter((w) => w.id !== activeWorktreeId)
-                .map((wt) => (
-                  <button
-                    key={wt.id}
-                    type="button"
-                    onClick={() => setTargetDir(wt.path)}
-                    className={`w-full px-2.5 py-1.5 rounded-md flex items-center justify-between border text-left transition-colors ${
-                      targetDir === wt.path
-                        ? 'bg-orca-accent/15 border-orca-accent/50 text-white font-medium'
-                        : 'bg-orca-card/30 border-orca-border hover:bg-orca-card text-orca-text'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2 truncate">
-                      <GitBranch className="w-3.5 h-3.5 text-orca-accent/70 shrink-0" />
-                      <span className="truncate">{wt.branch}</span>
-                    </div>
-                    <span className="text-[10px] text-orca-muted font-mono truncate max-w-[150px]">
-                      {wt.name}
-                    </span>
-                  </button>
-                ))}
-
-              {/* Recent Directories */}
-              {recentDirectories.map((dir) => (
-                <button
-                  key={dir}
-                  type="button"
-                  onClick={() => setTargetDir(dir)}
-                  className={`w-full px-2.5 py-1.5 rounded-md flex items-center justify-between border text-left transition-colors ${
-                    targetDir === dir
-                      ? 'bg-orca-accent/15 border-orca-accent/50 text-white font-medium'
-                      : 'bg-orca-card/20 border-orca-border hover:bg-orca-card text-orca-text'
-                  }`}
-                >
-                  <div className="flex items-center gap-2 truncate">
-                    <History className="w-3.5 h-3.5 text-orca-muted shrink-0" />
-                    <span className="truncate text-orca-muted" title={dir}>
-                      {dir}
-                    </span>
-                  </div>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* 3. Launch Profile Selector */}
+          {/* 2. Launch Profile Selector */}
           <div>
             <span className="text-[10px] uppercase font-mono font-semibold text-orca-muted tracking-wider block mb-1.5">
               Launch Shell / Agent
@@ -312,11 +226,13 @@ export const OpenTerminalModal: React.FC<OpenTerminalModalProps> = ({
                         : 'bg-orca-card/40 border-orca-border text-orca-muted hover:text-white hover:bg-orca-hover'
                     }`}
                   >
-                    {p.is_agent ? (
-                      <Bot className="w-3 h-3 text-orca-emerald" />
-                    ) : (
-                      <Terminal className="w-3 h-3 text-orca-muted" />
-                    )}
+                    <TerminalIcon
+                      shell={p.executable}
+                      title={p.name}
+                      isAgent={p.is_agent}
+                      agentType={p.agent_type as any}
+                      className="w-3.5 h-3.5"
+                    />
                     <span>{p.name}</span>
                   </button>
                 );
@@ -324,7 +240,7 @@ export const OpenTerminalModal: React.FC<OpenTerminalModalProps> = ({
             </div>
           </div>
 
-          {/* 4. Split Screen Option */}
+          {/* 3. Split Screen Option */}
           {sessions.length > 0 && (
             <div className="pt-1">
               <label className="flex items-center gap-2 cursor-pointer text-orca-muted hover:text-white transition-colors">

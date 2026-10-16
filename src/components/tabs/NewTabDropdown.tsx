@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, ChevronDown, Terminal, Bot, Sparkles, FolderOpen } from 'lucide-react';
+import { Plus, ChevronDown, Sparkles, FolderOpen } from 'lucide-react';
+import { TerminalIcon } from '../terminal/TerminalIcon';
 import { useTerminalStore } from '../../stores/useTerminalStore';
 import { useWorktreeStore } from '../../stores/useWorktreeStore';
 
@@ -32,6 +33,7 @@ export const NewTabDropdown: React.FC<NewTabDropdownProps> = ({ onOpenTerminalMo
       args: profile.args,
       title: profile.name,
       cwd: defaultCwd,
+      worktreeId: activeWorktree?.id,
       isAgent: profile.is_agent,
       agentType: profile.agent_type,
     });
@@ -92,7 +94,13 @@ export const NewTabDropdown: React.FC<NewTabDropdownProps> = ({ onOpenTerminalMo
                 onClick={() => handleSelectProfile(p)}
                 className="w-full text-left px-3 py-1.5 flex items-center gap-2 hover:bg-orca-hover hover:text-white text-orca-text transition-colors"
               >
-                <Bot className="w-3.5 h-3.5 text-orca-emerald" />
+                <TerminalIcon
+                  shell={p.executable}
+                  title={p.name}
+                  isAgent={p.is_agent}
+                  agentType={p.agent_type as any}
+                  className="w-3.5 h-3.5"
+                />
                 <span className="font-medium">{p.name}</span>
                 <span className="ml-auto text-[10px] text-orca-emerald font-mono bg-orca-emerald/10 px-1 rounded">
                   Agent
@@ -109,8 +117,7 @@ export const NewTabDropdown: React.FC<NewTabDropdownProps> = ({ onOpenTerminalMo
 
           {/* Standard Shells Section */}
           <div className="px-2 py-1 text-[10px] font-semibold text-orca-muted uppercase tracking-wider flex items-center gap-1">
-            <Terminal className="w-3 h-3 text-orca-muted" />
-            <span>Direct Shells</span>
+            <span className="text-[10px] text-orca-muted">Direct Shells</span>
           </div>
 
           {standardProfiles.map((p) => (
@@ -119,7 +126,13 @@ export const NewTabDropdown: React.FC<NewTabDropdownProps> = ({ onOpenTerminalMo
               onClick={() => handleSelectProfile(p)}
               className="w-full text-left px-3 py-1.5 flex items-center gap-2 hover:bg-orca-hover hover:text-white text-orca-text transition-colors"
             >
-              <Terminal className="w-3.5 h-3.5 text-orca-muted" />
+              <TerminalIcon
+                shell={p.executable}
+                title={p.name}
+                isAgent={p.is_agent}
+                agentType={p.agent_type as any}
+                className="w-3.5 h-3.5"
+              />
               <span>{p.name}</span>
             </button>
           ))}

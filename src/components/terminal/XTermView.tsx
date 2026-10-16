@@ -6,6 +6,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import { SearchAddon } from '@xterm/addon-search';
 import '@xterm/xterm/css/xterm.css';
 import { tauriIpc } from '../../lib/tauriIpc';
+import { useTerminalStore } from '../../stores/useTerminalStore';
 
 interface XTermViewProps {
   sessionId: string;
@@ -19,6 +20,7 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive }) => 
 
   useEffect(() => {
     if (!containerRef.current) return;
+    let disposed = false;
 
     // Create xterm instance with clean Vela dark theme
     const term = new Terminal({
@@ -86,21 +88,78 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive }) => 
       tauriIpc.writeTerminal(sessionId, data);
     });
 
+    // Let Ctrl+V / Ctrl+Shift+V fall through to the browser paste event
+    // instead of xterm sending a raw ^V, so the paste handler below decides.
+    term.attachCustomKeyEventHandler((e) => {
+      if (
+        e.type === 'keydown' &&
+        e.ctrlKey &&
+        !e.altKey &&
+        !e.metaKey &&
+        e.key.toLowerCase() === 'v'
+      ) {
+        return false;
+      }
+      return true;
+    });
+
+    // Image-only clipboard: the browser paste carries no text, so nothing would
+    // reach the PTY. Send Alt+V (ESC v) instead so CLI agents like Claude Code
+    // read the image from the Windows clipboard themselves.
+    const container = containerRef.current;
+    const handlePaste = (e: ClipboardEvent) => {
+      const data = e.clipboardData;
+      if (!data || data.getData('text/plain')) return;
+      const hasImage = Array.from(data.items).some(
+        (item) => item.kind === 'file' && item.type.startsWith('image/')
+      );
+      if (!hasImage) return;
+      e.preventDefault();
+      e.stopPropagation();
+      tauriIpc.writeTerminal(sessionId, '\x1bv');
+    };
+    container.addEventListener('paste', handlePaste, true);
+
     // PTY output listener (Rust ConPTY -> xterm)
     let unlistenPtyOutput: (() => void) | null = null;
     let unlistenPtyExit: (() => void) | null = null;
 
-    tauriIpc.onPtyOutput(sessionId, (bytes) => {
-      term.write(bytes);
-    }).then((unlisten) => {
-      unlistenPtyOutput = unlisten;
-    });
+    const connectPty = async () => {
+      try {
+        // Register both listeners before opening the backend reader gate.
+        // The terminal instance already exists, so the first PTY chunk has a sink.
+        const outputUnlisten = await tauriIpc.onPtyOutput(sessionId, (bytes) => {
+          if (!disposed) term.write(bytes);
+        });
+        if (disposed) {
+          outputUnlisten();
+          return;
+        }
+        unlistenPtyOutput = outputUnlisten;
 
-    tauriIpc.onPtyExit(sessionId, () => {
-      term.writeln('\r\n\x1b[90m[Process completed]\x1b[0m');
-    }).then((unlisten) => {
-      unlistenPtyExit = unlisten;
-    });
+        const exitUnlisten = await tauriIpc.onPtyExit(sessionId, () => {
+          if (disposed) return;
+          term.writeln('\r\n\x1b[90m[Process completed]\x1b[0m');
+          useTerminalStore.getState().markSessionExited(sessionId);
+        });
+        if (disposed) {
+          exitUnlisten();
+          return;
+        }
+        unlistenPtyExit = exitUnlisten;
+
+        await tauriIpc.startTerminalOutput(sessionId);
+      } catch (error) {
+        if (disposed) return;
+        console.error('Failed to connect terminal output stream', error);
+        term.writeln('\r\n\x1b[31m[Unable to start terminal output stream]\x1b[0m');
+        useTerminalStore.getState().markSessionExited(sessionId);
+        void tauriIpc.killTerminal(sessionId).catch((killError) => {
+          console.error('Failed to stop terminal after stream setup failed', killError);
+        });
+      }
+    };
+    void connectPty();
 
     // Window / Container resize observer
     const resizeObserver = new ResizeObserver(() => {
@@ -112,7 +171,9 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive }) => 
     resizeObserver.observe(containerRef.current);
 
     return () => {
+      disposed = true;
       onDataDisposable.dispose();
+      container.removeEventListener('paste', handlePaste, true);
       resizeObserver.disconnect();
       if (unlistenPtyOutput) unlistenPtyOutput();
       if (unlistenPtyExit) unlistenPtyExit();

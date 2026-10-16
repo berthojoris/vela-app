@@ -6,7 +6,6 @@ import velaLogo from '../../assets/vela_logo.png';
 
 export const TitleBar: React.FC = () => {
   const [isMaximized, setIsMaximized] = useState(false);
-  const { repoPath, worktrees, activeWorktreeId } = useWorktreeStore();
 
   useEffect(() => {
     // Initial check
@@ -34,6 +33,8 @@ export const TitleBar: React.FC = () => {
     await tauriIpc.closeWindow();
   };
 
+  const { repoPath, worktrees, activeWorktreeId, activeSessionCwd } = useWorktreeStore();
+
   const activeWorktree = worktrees.find((w) => w.id === activeWorktreeId);
 
   return (
@@ -56,10 +57,10 @@ export const TitleBar: React.FC = () => {
           </span>
         </div>
 
-        {repoPath && (
+        {repoPath ? (
           <div className="flex items-center gap-1.5 ml-2 pl-3 border-l border-orca-border text-orca-muted">
             <FolderGit2 className="w-3.5 h-3.5 text-orca-accent" />
-            <span className="truncate max-w-[140px] text-orca-text font-medium">
+            <span className="truncate max-w-[140px] text-orca-text font-medium" title={repoPath}>
               {repoPath.split('/').pop()}
             </span>
 
@@ -70,7 +71,13 @@ export const TitleBar: React.FC = () => {
               </div>
             )}
           </div>
-        )}
+        ) : activeSessionCwd ? (
+          <div className="flex items-center gap-1.5 ml-2 pl-3 border-l border-orca-border text-orca-muted">
+            <span className="truncate max-w-[140px] text-orca-muted font-mono" title={activeSessionCwd}>
+              {activeSessionCwd.split('/').pop() || activeSessionCwd}
+            </span>
+          </div>
+        ) : null}
       </div>
 
       {/* Middle: Drag Region Filler */}

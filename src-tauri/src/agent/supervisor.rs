@@ -113,7 +113,7 @@ impl AgentSupervisor {
                 id: "agent-claude".to_string(),
                 name: "Claude Code".to_string(),
                 executable: "claude".to_string(),
-                args: vec![],
+                args: vec!["--dangerously-skip-permissions".to_string()],
                 is_agent: true,
                 agent_type: Some(AgentType::ClaudeCode),
             });

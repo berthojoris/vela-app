@@ -47,7 +47,7 @@ export const TerminalGrid: React.FC<TerminalGridProps> = ({
           </button>
 
           <button
-            onClick={() => onOpenTerminalModal('claude')}
+            onClick={() => onOpenTerminalModal('agent-claude')}
             className="h-9 px-4 rounded-md bg-orca-card hover:bg-orca-hover border border-orca-border text-orca-text text-xs font-medium flex items-center gap-2 transition-all"
           >
             <Bot className="w-4 h-4 text-orca-emerald" />
@@ -71,48 +71,54 @@ export const TerminalGrid: React.FC<TerminalGridProps> = ({
   const activeSession = sessions.find((s) => s.id === activeSessionId) || sessions[0];
   const secondarySession = sessions.find((s) => s.id === secondarySessionId);
 
-  if (splitMode === 'vertical' && secondarySession) {
-    return (
-      <div className="flex-1 flex overflow-hidden">
-        <div
-          className="w-1/2 h-full border-r border-orca-border relative"
-          onClick={() => setActiveSession(activeSession.id)}
-        >
-          <XTermView sessionId={activeSession.id} isActive={true} />
-        </div>
-        <div
-          className="w-1/2 h-full relative"
-          onClick={() => setActiveSession(secondarySession.id)}
-        >
-          <XTermView sessionId={secondarySession.id} isActive={false} />
-        </div>
-      </div>
-    );
-  }
+  const hasDistinctSecondary = secondarySession && secondarySession.id !== activeSession.id;
+  const isVerticalSplit = splitMode === 'vertical' && Boolean(hasDistinctSecondary);
+  const isHorizontalSplit = splitMode === 'horizontal' && Boolean(hasDistinctSecondary);
+  const showSecondary = isVerticalSplit || isHorizontalSplit;
+  const orderedSessions = [
+    activeSession,
+    ...(showSecondary && secondarySession ? [secondarySession] : []),
+    ...sessions.filter(
+      (session) =>
+        session.id !== activeSession.id &&
+        (!showSecondary || session.id !== secondarySession?.id)
+    ),
+  ];
 
-  if (splitMode === 'horizontal' && secondarySession) {
-    return (
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <div
-          className="h-1/2 w-full border-b border-orca-border relative"
-          onClick={() => setActiveSession(activeSession.id)}
-        >
-          <XTermView sessionId={activeSession.id} isActive={true} />
-        </div>
-        <div
-          className="h-1/2 w-full relative"
-          onClick={() => setActiveSession(secondarySession.id)}
-        >
-          <XTermView sessionId={secondarySession.id} isActive={false} />
-        </div>
-      </div>
-    );
-  }
+  const containerClass = isVerticalSplit
+    ? 'flex-1 flex overflow-hidden'
+    : isHorizontalSplit
+    ? 'flex-1 flex flex-col overflow-hidden'
+    : 'flex-1 h-full w-full overflow-hidden';
 
-  // Single Pane Mode
   return (
-    <div className="flex-1 h-full w-full overflow-hidden">
-      <XTermView sessionId={activeSession.id} isActive={true} />
+    <div className={containerClass}>
+      {orderedSessions.map((session) => {
+        const isActive = session.id === activeSession.id;
+        const isSecondary = showSecondary && session.id === secondarySession?.id;
+        const isVisible = isActive || isSecondary;
+        const paneClass = !isVisible
+          ? 'hidden'
+          : isVerticalSplit
+          ? isActive
+            ? 'w-1/2 h-full border-r border-orca-border relative'
+            : 'w-1/2 h-full relative'
+          : isHorizontalSplit
+          ? isActive
+            ? 'h-1/2 w-full border-b border-orca-border relative'
+            : 'h-1/2 w-full relative'
+          : 'w-full h-full relative';
+
+        return (
+          <div
+            key={session.id}
+            className={paneClass}
+            onClick={isVisible ? () => setActiveSession(session.id) : undefined}
+          >
+            <XTermView sessionId={session.id} isActive={isActive} />
+          </div>
+        );
+      })}
     </div>
   );
 };

@@ -84,3 +84,49 @@ pub struct DetectedAgent {
     pub available: bool,
     pub version: Option<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn optional_terminal_fields_serialize_as_null_and_agent_types_as_snake_case() {
+        let session = TerminalSession {
+            id: "term-test".into(),
+            title: "Test".into(),
+            shell: "pwsh.exe".into(),
+            cwd: "C:/repo".into(),
+            worktree_id: None,
+            cols: 80,
+            rows: 24,
+            pid: None,
+            is_agent: true,
+            agent_type: Some(AgentType::OpenCode),
+            agent_status: None,
+        };
+
+        let value = serde_json::to_value(session).expect("terminal session should serialize");
+        assert_eq!(value["worktree_id"], json!(null));
+        assert_eq!(value["pid"], json!(null));
+        assert_eq!(value["agent_type"], json!("open_code"));
+        assert_eq!(value["agent_status"], json!(null));
+    }
+
+    #[test]
+    fn agent_status_keeps_tagged_wire_shape() {
+        let value = serde_json::to_value(AgentStatus::Running {
+            started_at: 42,
+            task: "index".into(),
+        })
+        .expect("agent status should serialize");
+
+        assert_eq!(
+            value,
+            json!({
+                "status": "running",
+                "data": { "started_at": 42, "task": "index" }
+            })
+        );
+    }
+}

@@ -3,6 +3,7 @@ import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
 import {
   DetectedAgent,
+  AgentType,
   FileDiff,
   GitWorktree,
   ShellProfile,
@@ -24,7 +25,7 @@ export const tauriIpc = {
     rows: number;
     worktreeId?: string;
     isAgent: boolean;
-    agentType?: string;
+    agentType?: AgentType | null;
   }): Promise<TerminalSession> {
     if (!isTauri()) {
       return {
@@ -32,9 +33,13 @@ export const tauriIpc = {
         title: params.title,
         shell: params.shell,
         cwd: params.cwd,
+        worktree_id: params.worktreeId ?? null,
         cols: params.cols,
         rows: params.rows,
+        pid: null,
         is_agent: params.isAgent,
+        agent_type: params.agentType ?? null,
+        agent_status: null,
       };
     }
     return await invoke<TerminalSession>('spawn_terminal', {
@@ -66,9 +71,23 @@ export const tauriIpc = {
     await invoke('kill_terminal', { id });
   },
 
-  async findGitRepo(path: string): Promise<string | null> {
+  async startTerminalOutput(id: string): Promise<void> {
+    if (!isTauri()) return;
+    await invoke('start_terminal_output', { id });
+  },
+
+  async findGitRepo(path?: string | null): Promise<string | null> {
     if (!isTauri()) return null;
-    return await invoke<string | null>('find_git_repo', { path });
+    return await invoke<string | null>('find_git_repo', { path: path ?? null });
+  },
+
+  async getCurrentDir(): Promise<string | null> {
+    if (!isTauri()) return null;
+    try {
+      return await invoke<string>('get_current_dir');
+    } catch {
+      return null;
+    }
   },
 
   async listWorktrees(repoPath: string): Promise<GitWorktree[]> {
@@ -117,6 +136,7 @@ export const tauriIpc = {
           executable: 'powershell.exe',
           args: [],
           is_agent: false,
+          agent_type: null,
         },
         {
           id: 'cmd',
@@ -124,6 +144,7 @@ export const tauriIpc = {
           executable: 'cmd.exe',
           args: [],
           is_agent: false,
+          agent_type: null,
         },
       ];
     }
@@ -168,13 +189,14 @@ export const tauriIpc = {
         defaultPath: options?.defaultPath,
       });
       if (Array.isArray(selected)) {
-        return selected[0] ?? null;
+        return selected[0] ? selected[0].replace(/\\/g, '/') : null;
       }
-      return selected;
+      return typeof selected === 'string' ? selected.replace(/\\/g, '/') : null;
     } catch (err) {
       console.warn('Native dialog plugin failed, falling back to invoke:', err);
       try {
-        return await invoke<string | null>('select_directory');
+        const fallback = await invoke<string | null>('select_directory');
+        return fallback ? fallback.replace(/\\/g, '/') : null;
       } catch {
         return null;
       }

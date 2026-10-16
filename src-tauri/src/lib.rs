@@ -24,12 +24,21 @@ fn spawn_terminal(
     is_agent: bool,
     agent_type: Option<AgentType>,
 ) -> Result<TerminalSession, String> {
+    let resolved_cwd = if cwd.trim().is_empty() {
+        std::env::current_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default()
+    } else {
+        cwd
+    };
+    let clean_cwd = GitManager::normalize_path(&resolved_cwd);
+
     let pid = pty_manager.spawn(
         app,
         id.clone(),
         shell.clone(),
         args,
-        cwd.clone(),
+        clean_cwd.clone(),
         cols,
         rows,
     )?;
@@ -38,7 +47,7 @@ fn spawn_terminal(
         id,
         title,
         shell,
-        cwd,
+        cwd: clean_cwd,
         worktree_id,
         cols,
         rows,
@@ -74,41 +83,62 @@ fn kill_terminal(pty_manager: State<'_, PtyManager>, id: String) -> Result<(), S
 }
 
 #[tauri::command]
-fn find_git_repo(path: String) -> Result<Option<String>, String> {
-    Ok(GitManager::find_repo_root(&path))
+fn start_terminal_output(pty_manager: State<'_, PtyManager>, id: String) -> Result<(), String> {
+    pty_manager.start_output(&id)
 }
 
 #[tauri::command]
-fn list_worktrees(repo_path: String) -> Result<Vec<GitWorktree>, String> {
-    GitManager::list_worktrees(&repo_path)
+async fn find_git_repo(path: Option<String>) -> Result<Option<String>, String> {
+    tokio::task::spawn_blocking(move || GitManager::find_repo_root(path.as_deref()))
+        .await
+        .map_err(|e| format!("Task execution error: {}", e))
 }
 
 #[tauri::command]
-fn create_worktree(
+async fn list_worktrees(repo_path: String) -> Result<Vec<GitWorktree>, String> {
+    tokio::task::spawn_blocking(move || GitManager::list_worktrees(&repo_path))
+        .await
+        .map_err(|e| format!("Task execution error: {}", e))?
+}
+
+#[tauri::command]
+async fn create_worktree(
     repo_path: String,
     branch: String,
     base_branch: Option<String>,
 ) -> Result<GitWorktree, String> {
-    GitManager::create_worktree(&repo_path, &branch, base_branch.as_deref())
+    tokio::task::spawn_blocking(move || {
+        GitManager::create_worktree(&repo_path, &branch, base_branch.as_deref())
+    })
+    .await
+    .map_err(|e| format!("Task execution error: {}", e))?
 }
 
 #[tauri::command]
-fn remove_worktree(
+async fn remove_worktree(
     repo_path: String,
     worktree_path: String,
     force: bool,
 ) -> Result<(), String> {
-    GitManager::remove_worktree(&repo_path, &worktree_path, force)
+    tokio::task::spawn_blocking(move || {
+        GitManager::remove_worktree(&repo_path, &worktree_path, force)
+    })
+    .await
+    .map_err(|e| format!("Task execution error: {}", e))?
 }
 
 #[tauri::command]
-fn get_worktree_diff(worktree_path: String) -> Result<Vec<FileDiff>, String> {
-    GitManager::get_worktree_diff(&worktree_path)
+async fn get_worktree_diff(worktree_path: String) -> Result<Vec<FileDiff>, String> {
+    tokio::task::spawn_blocking(move || GitManager::get_worktree_diff(&worktree_path))
+        .await
+        .map_err(|e| format!("Task execution error: {}", e))?
 }
 
 #[tauri::command]
-fn commit_worktree(worktree_path: String, message: String) -> Result<String, String> {
-    GitManager::commit_worktree(&worktree_path, &message)
+async fn commit_worktree(worktree_path: String, message: String) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || GitManager::commit_worktree(&worktree_path, &message))
+        .await
+        .map_err(|e| format!("Task execution error: {}", e))?
 }
 
 #[tauri::command]
@@ -117,8 +147,10 @@ fn get_shell_profiles() -> Result<Vec<ShellProfile>, String> {
 }
 
 #[tauri::command]
-fn detect_agents() -> Result<Vec<DetectedAgent>, String> {
-    Ok(AgentSupervisor::detect_installed_agents())
+async fn detect_agents() -> Result<Vec<DetectedAgent>, String> {
+    tokio::task::spawn_blocking(AgentSupervisor::detect_installed_agents)
+        .await
+        .map_err(|e| format!("Task execution error: {}", e))
 }
 
 #[tauri::command]
@@ -176,6 +208,13 @@ fn select_directory() -> Result<Option<String>, String> {
     }
 }
 
+#[tauri::command]
+fn get_current_dir() -> Result<String, String> {
+    std::env::current_dir()
+        .map(|p| p.to_string_lossy().to_string().replace('\\', "/"))
+        .map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let pty_manager = PtyManager::new();
@@ -190,6 +229,7 @@ pub fn run() {
             write_terminal,
             resize_terminal,
             kill_terminal,
+            start_terminal_output,
             find_git_repo,
             list_worktrees,
             create_worktree,
@@ -203,6 +243,7 @@ pub fn run() {
             close_window,
             is_window_maximized,
             select_directory,
+            get_current_dir,
         ])
         .run(tauri::generate_context!())
         .expect("error while running vela application");

@@ -1,13 +1,14 @@
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use tauri::{AppHandle, Emitter};
 
 pub struct ActiveSession {
     pub writer: Box<dyn Write + Send>,
     pub master: Box<dyn MasterPty + Send>,
     pub pid: Option<u32>,
+    output_ready: Arc<(Mutex<bool>, Condvar)>,
 }
 
 #[derive(Clone)]
@@ -106,7 +107,10 @@ impl PtyManager {
             writer,
             master,
             pid,
+            output_ready: Arc::new((Mutex::new(false), Condvar::new())),
         };
+
+        let output_ready = active_session.output_ready.clone();
 
         {
             let mut sessions = self.sessions.lock().unwrap();
@@ -119,6 +123,15 @@ impl PtyManager {
         let sessions_map = self.sessions.clone();
 
         std::thread::spawn(move || {
+            // The UI creates the terminal and installs both event listeners before
+            // opening this gate. PTY data remains buffered by the OS in the meantime.
+            let (ready_lock, ready_cv) = &*output_ready;
+            let mut ready = ready_lock.lock().unwrap();
+            while !*ready {
+                ready = ready_cv.wait(ready).unwrap();
+            }
+            drop(ready);
+
             let mut buf = [0u8; 8192];
             loop {
                 match reader.read(&mut buf) {
@@ -143,6 +156,21 @@ impl PtyManager {
         });
 
         Ok(pid)
+    }
+
+    pub fn start_output(&self, id: &str) -> Result<(), String> {
+        let session = {
+            let sessions = self.sessions.lock().unwrap();
+            sessions
+                .get(id)
+                .cloned()
+                .ok_or_else(|| format!("Session {} not found", id))?
+        };
+        let session = session.lock().unwrap();
+        let (ready_lock, ready_cv) = &*session.output_ready;
+        *ready_lock.lock().unwrap() = true;
+        ready_cv.notify_all();
+        Ok(())
     }
 
     pub fn write(&self, id: &str, data: &[u8]) -> Result<(), String> {
@@ -183,23 +211,82 @@ impl PtyManager {
     }
 
     pub fn kill(&self, id: &str) -> Result<(), String> {
-        let mut sessions = self.sessions.lock().unwrap();
-        if let Some(session_arc) = sessions.remove(id) {
-            let session = session_arc.lock().unwrap();
-            if let Some(pid) = session.pid {
-                #[cfg(windows)]
-                {
-                    use std::os::windows::process::CommandExt;
-                    let mut cmd = std::process::Command::new("taskkill");
-                    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-                    let _ = cmd.args(["/F", "/T", "/PID", &pid.to_string()]).output();
+        let session_arc = {
+            let sessions = self.sessions.lock().unwrap();
+            sessions.get(id).cloned()
+        };
+
+        if let Some(session_arc) = session_arc {
+            let (pid, output_ready) = {
+                let session = session_arc.lock().unwrap();
+                (session.pid, session.output_ready.clone())
+            };
+
+            // Wake the reader even if termination fails, so a naturally exited
+            // process can still be observed and cleaned up by its reader thread.
+            let (ready_lock, ready_cv) = &*output_ready;
+            *ready_lock.lock().unwrap() = true;
+            ready_cv.notify_all();
+
+            let pid = pid.ok_or_else(|| {
+                format!("Cannot terminate session {}: process ID is unavailable", id)
+            })?;
+
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                let mut cmd = std::process::Command::new("taskkill");
+                cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+                let output = cmd
+                    .args(["/F", "/T", "/PID", &pid.to_string()])
+                    .output()
+                    .map_err(|e| format!("Failed to run taskkill for session {}: {}", id, e))?;
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    let detail = if stderr.trim().is_empty() {
+                        stdout.trim()
+                    } else {
+                        stderr.trim()
+                    };
+                    return Err(format!(
+                        "Failed to terminate session {} (PID {}): {}",
+                        id,
+                        pid,
+                        if detail.is_empty() {
+                            "taskkill returned a non-zero status"
+                        } else {
+                            detail
+                        }
+                    ));
                 }
-                #[cfg(not(windows))]
-                {
-                    let _ = std::process::Command::new("kill")
-                        .args(["-9", &pid.to_string()])
-                        .output();
+            }
+            #[cfg(not(windows))]
+            {
+                let output = std::process::Command::new("kill")
+                    .args(["-9", &pid.to_string()])
+                    .output();
+                let output =
+                    output.map_err(|e| format!("Failed to run kill for session {}: {}", id, e))?;
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    return Err(format!(
+                        "Failed to terminate session {} (PID {}): {}",
+                        id,
+                        pid,
+                        stderr.trim()
+                    ));
                 }
+            }
+
+            let mut sessions = self.sessions.lock().unwrap();
+            // Do not remove a newer session if the ID was reused while the
+            // process was being terminated.
+            if sessions
+                .get(id)
+                .is_some_and(|current| Arc::ptr_eq(current, &session_arc))
+            {
+                sessions.remove(id);
             }
             Ok(())
         } else {

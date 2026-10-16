@@ -18,13 +18,15 @@ export interface TerminalSession {
   title: string;
   shell: string;
   cwd: string;
-  worktree_id?: string;
+  worktree_id: string | null;
   cols: number;
   rows: number;
-  pid?: number;
+  pid: number | null;
   is_agent: boolean;
-  agent_type?: AgentType;
-  agent_status?: AgentStatus;
+  agent_type: AgentType | null;
+  agent_status: AgentStatus | null;
+  /** Frontend-only lifecycle state; the backend wire model does not contain this. */
+  exited?: boolean;
 }
 
 export interface GitWorktree {
@@ -34,7 +36,7 @@ export interface GitWorktree {
   branch: string;
   is_main: boolean;
   dirty_files_count: number;
-  active_agent_name?: string;
+  active_agent_name: string | null;
 }
 
 export interface FileDiff {
@@ -51,7 +53,7 @@ export interface ShellProfile {
   executable: string;
   args: string[];
   is_agent: boolean;
-  agent_type?: AgentType;
+  agent_type: AgentType | null;
 }
 
 export interface DetectedAgent {
@@ -59,5 +61,5 @@ export interface DetectedAgent {
   name: string;
   executable: string;
   available: boolean;
-  version?: string;
+  version: string | null;
 }
