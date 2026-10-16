@@ -206,12 +206,13 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onComplete }) => {
       {/* Foreground Content */}
       <div className="relative z-10 flex flex-col items-center text-center px-6 max-w-md">
         {/* Glowing Pulsar Logo Image */}
-        <div className="relative mb-6 group">
-          <div className="absolute inset-0 rounded-full bg-cyan-500/25 blur-2xl animate-pulse" />
+        <div className="relative mb-6 group flex items-center justify-center">
+          <div className="absolute -inset-4 rounded-full bg-cyan-400/20 blur-3xl animate-pulse" />
+          <div className="absolute inset-0 rounded-full bg-blue-600/20 blur-xl" />
           <img
             src={velaLogo}
             alt="Vela"
-            className="w-36 h-36 md:w-44 md:h-44 object-contain rounded-2xl drop-shadow-[0_0_35px_rgba(56,189,248,0.55)] transition-transform duration-1000 ease-out transform hover:scale-105"
+            className="relative z-10 w-36 h-36 md:w-44 md:h-44 object-contain drop-shadow-[0_0_35px_rgba(56,189,248,0.65)] transition-transform duration-1000 ease-out transform hover:scale-105"
           />
         </div>
 

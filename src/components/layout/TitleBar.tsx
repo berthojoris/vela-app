@@ -48,7 +48,7 @@ export const TitleBar: React.FC = () => {
           <img
             src={velaLogo}
             alt="Vela"
-            className="w-5 h-5 rounded-full object-cover ring-1 ring-cyan-500/40 shadow-sm"
+            className="w-5 h-5 object-contain drop-shadow-[0_0_8px_rgba(56,189,248,0.6)]"
           />
           <span className="tracking-tight font-bold text-white text-[13px]">Vela</span>
           <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-orca-card border border-orca-border text-orca-muted">

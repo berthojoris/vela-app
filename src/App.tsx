@@ -15,8 +15,14 @@ export const App: React.FC = () => {
   const [showSplash, setShowSplash] = useState(true);
   const [isCreateWorktreeOpen, setIsCreateWorktreeOpen] = useState(false);
   const [isOpenTerminalModalOpen, setIsOpenTerminalModalOpen] = useState(false);
-  const { fetchProfiles, createSession, sessions } = useTerminalStore();
+  const [modalInitialProfileId, setModalInitialProfileId] = useState<string | undefined>(undefined);
+  const { fetchProfiles } = useTerminalStore();
   const { setRepoPath } = useWorktreeStore();
+
+  const handleOpenTerminalModal = (profileId?: string) => {
+    setModalInitialProfileId(profileId);
+    setIsOpenTerminalModalOpen(true);
+  };
 
   useEffect(() => {
     // 1. Fetch available shells and agents
@@ -24,11 +30,6 @@ export const App: React.FC = () => {
 
     // 2. Try to detect current workspace directory as Git repo
     setRepoPath(window.location.pathname || '.');
-
-    // 3. Open initial default terminal if none exists
-    if (sessions.length === 0) {
-      createSession();
-    }
   }, []);
 
   return (
@@ -49,12 +50,13 @@ export const App: React.FC = () => {
         {/* Right: Terminal Multiplexer Area */}
         <div className="flex-1 flex flex-col overflow-hidden bg-orca-darkest">
           {/* Tab Navigation Bar with "+" Button & Split Toggles */}
-          <TabBar onOpenTerminalModal={() => setIsOpenTerminalModalOpen(true)} />
+          <TabBar onOpenTerminalModal={() => handleOpenTerminalModal()} />
 
           {/* Active Terminal Panes / Split Grid */}
           <div className="flex-1 relative overflow-hidden">
             <TerminalGrid
               onOpenCreateWorktree={() => setIsCreateWorktreeOpen(true)}
+              onOpenTerminalModal={handleOpenTerminalModal}
             />
           </div>
         </div>
@@ -66,7 +68,11 @@ export const App: React.FC = () => {
       {/* Global Modals */}
       <OpenTerminalModal
         isOpen={isOpenTerminalModalOpen}
-        onClose={() => setIsOpenTerminalModalOpen(false)}
+        initialProfileId={modalInitialProfileId}
+        onClose={() => {
+          setIsOpenTerminalModalOpen(false);
+          setModalInitialProfileId(undefined);
+        }}
       />
       <CreateWorktreeModal
         isOpen={isCreateWorktreeOpen}

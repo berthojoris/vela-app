@@ -20,12 +20,14 @@ interface OpenTerminalModalProps {
   isOpen: boolean;
   onClose: () => void;
   initialDirectory?: string;
+  initialProfileId?: string;
 }
 
 export const OpenTerminalModal: React.FC<OpenTerminalModalProps> = ({
   isOpen,
   onClose,
   initialDirectory,
+  initialProfileId,
 }) => {
   const {
     profiles,
@@ -34,6 +36,7 @@ export const OpenTerminalModal: React.FC<OpenTerminalModalProps> = ({
     addRecentDirectory,
     setSplitMode,
     sessions,
+    defaultProfileId,
   } = useTerminalStore();
 
   const { repoPath, worktrees, activeWorktreeId } = useWorktreeStore();
@@ -55,7 +58,11 @@ export const OpenTerminalModal: React.FC<OpenTerminalModalProps> = ({
         '';
       setTargetDir(defaultDir);
 
-      if (profiles.length > 0 && !selectedProfileId) {
+      if (initialProfileId) {
+        setSelectedProfileId(initialProfileId);
+      } else if (defaultProfileId) {
+        setSelectedProfileId(defaultProfileId);
+      } else if (profiles.length > 0 && !selectedProfileId) {
         setSelectedProfileId(profiles[0].id);
       }
 
@@ -64,7 +71,7 @@ export const OpenTerminalModal: React.FC<OpenTerminalModalProps> = ({
         inputRef.current?.select();
       }, 50);
     }
-  }, [isOpen, initialDirectory, activeWorktree, repoPath, profiles]);
+  }, [isOpen, initialDirectory, initialProfileId, activeWorktree, repoPath, profiles, defaultProfileId]);
 
   if (!isOpen) return null;
 

@@ -39,7 +39,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   defaultProfileId: 'pwsh',
   recentDirectories: (() => {
     try {
-      const saved = localStorage.getItem('orca_recent_dirs');
+      const saved = localStorage.getItem('vela_recent_dirs') || localStorage.getItem('orca_recent_dirs');
       return saved ? JSON.parse(saved) : [];
     } catch {
       return [];
@@ -53,7 +53,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       const filtered = state.recentDirectories.filter((d) => d !== cleanDir);
       const updated = [cleanDir, ...filtered].slice(0, 6);
       try {
-        localStorage.setItem('orca_recent_dirs', JSON.stringify(updated));
+        localStorage.setItem('vela_recent_dirs', JSON.stringify(updated));
       } catch {}
       return { recentDirectories: updated };
     });

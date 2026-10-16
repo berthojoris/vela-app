@@ -10,10 +10,12 @@ import {
   ChevronRight,
   RefreshCw,
   FolderGit2,
+  AlertCircle,
 } from 'lucide-react';
 import { useWorktreeStore } from '../../stores/useWorktreeStore';
 import { useTerminalStore } from '../../stores/useTerminalStore';
 import { useDiffStore } from '../../stores/useDiffStore';
+import { tauriIpc } from '../../lib/tauriIpc';
 
 interface WorktreeSidebarProps {
   onOpenCreateModal: () => void;
@@ -29,6 +31,7 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
     worktrees,
     activeWorktreeId,
     isLoading,
+    error,
     setRepoPath,
     refreshWorktrees,
     removeWorktree,
@@ -37,6 +40,21 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
 
   const { createSession } = useTerminalStore();
   const { openDiffModal } = useDiffStore();
+
+  const handleBrowseRepo = async () => {
+    try {
+      const selected = await tauriIpc.selectDirectory({
+        title: 'Select Git Repository Folder',
+        defaultPath: repoPath || undefined,
+      });
+      if (selected) {
+        await setRepoPath(selected);
+        setShowPathInput(false);
+      }
+    } catch (err) {
+      console.error('Failed to open directory picker', err);
+    }
+  };
 
   const handleOpenTerminalInWorktree = (path: string, branch: string) => {
     createSession({
@@ -117,21 +135,44 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
                 {repoPath.split('/').pop() || repoPath}
               </span>
             </div>
-            <button
-              onClick={() => setShowPathInput(!showPathInput)}
-              className="text-[10px] text-orca-muted hover:text-orca-accent px-1"
-            >
-              Change
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={handleBrowseRepo}
+                className="text-[10px] text-orca-muted hover:text-orca-accent px-1 transition-colors cursor-pointer"
+                title="Choose different repository (native dialog)"
+              >
+                Change
+              </button>
+            </div>
           </div>
         ) : (
-          <button
-            onClick={() => setShowPathInput(true)}
-            className="w-full h-8 rounded border border-dashed border-orca-border flex items-center justify-center gap-1.5 text-orca-muted hover:text-white hover:border-orca-accent transition-colors"
-          >
-            <FolderOpen className="w-3.5 h-3.5" />
-            <span>Select Git Repo Folder</span>
-          </button>
+          <div className="space-y-1.5">
+            <button
+              onClick={handleBrowseRepo}
+              className="w-full h-8 px-2.5 rounded border border-orca-border bg-orca-card/70 hover:bg-orca-card hover:border-orca-accent flex items-center justify-center gap-2 text-orca-text hover:text-white transition-all shadow-sm group cursor-pointer"
+              title="Open Windows File Explorer"
+            >
+              <FolderOpen className="w-3.5 h-3.5 text-orca-accent group-hover:scale-110 transition-transform" />
+              <span className="font-medium text-[11px]">Select Git Repo...</span>
+            </button>
+            <div className="flex items-center justify-between px-1 text-[10px] text-orca-muted">
+              <span>Windows Explorer</span>
+              <button
+                type="button"
+                onClick={() => setShowPathInput(!showPathInput)}
+                className="hover:text-orca-accent transition-colors cursor-pointer"
+              >
+                {showPathInput ? 'Hide manual' : 'Manual path'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {error && (
+          <div className="mt-2 p-1.5 bg-red-950/40 border border-red-800/60 rounded text-red-300 text-[10.5px] flex items-start gap-1.5 leading-tight">
+            <AlertCircle className="w-3.5 h-3.5 text-red-400 shrink-0 mt-0.5" />
+            <span>{error}</span>
+          </div>
         )}
 
         {showPathInput && (
@@ -145,7 +186,7 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
             />
             <button
               type="submit"
-              className="px-2 py-1 bg-orca-accent hover:bg-orca-accentHover text-white rounded text-[11px]"
+              className="px-2 py-1 bg-orca-accent hover:bg-orca-accentHover text-white rounded text-[11px] cursor-pointer"
             >
               Open
             </button>

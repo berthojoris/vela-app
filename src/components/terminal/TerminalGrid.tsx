@@ -6,9 +6,13 @@ import { Terminal, Plus, Bot, GitBranch, Sparkles } from 'lucide-react';
 
 interface TerminalGridProps {
   onOpenCreateWorktree: () => void;
+  onOpenTerminalModal: (initialProfileId?: string) => void;
 }
 
-export const TerminalGrid: React.FC<TerminalGridProps> = ({ onOpenCreateWorktree }) => {
+export const TerminalGrid: React.FC<TerminalGridProps> = ({
+  onOpenCreateWorktree,
+  onOpenTerminalModal,
+}) => {
   const {
     sessions,
     activeSessionId,
@@ -35,7 +39,7 @@ export const TerminalGrid: React.FC<TerminalGridProps> = ({ onOpenCreateWorktree
 
         <div className="flex flex-wrap items-center justify-center gap-3">
           <button
-            onClick={() => createSession({ cwd: defaultCwd })}
+            onClick={() => onOpenTerminalModal()}
             className="h-9 px-4 rounded-md bg-orca-accent hover:bg-orca-accentHover text-white text-xs font-medium flex items-center gap-2 shadow-sm transition-all"
           >
             <Plus className="w-4 h-4" />
@@ -43,14 +47,7 @@ export const TerminalGrid: React.FC<TerminalGridProps> = ({ onOpenCreateWorktree
           </button>
 
           <button
-            onClick={() =>
-              createSession({
-                title: 'Claude Code',
-                shell: 'claude',
-                cwd: defaultCwd,
-                isAgent: true,
-              })
-            }
+            onClick={() => onOpenTerminalModal('claude')}
             className="h-9 px-4 rounded-md bg-orca-card hover:bg-orca-hover border border-orca-border text-orca-text text-xs font-medium flex items-center gap-2 transition-all"
           >
             <Bot className="w-4 h-4 text-orca-emerald" />

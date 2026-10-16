@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
+import { open } from '@tauri-apps/plugin-dialog';
 import {
   DetectedAgent,
   FileDiff,
@@ -154,9 +155,30 @@ export const tauriIpc = {
     return await invoke<boolean>('is_window_maximized');
   },
 
-  async selectDirectory(): Promise<string | null> {
+  async selectDirectory(options?: {
+    title?: string;
+    defaultPath?: string;
+  }): Promise<string | null> {
     if (!isTauri()) return null;
-    return await invoke<string | null>('select_directory');
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: options?.title || 'Select Directory',
+        defaultPath: options?.defaultPath,
+      });
+      if (Array.isArray(selected)) {
+        return selected[0] ?? null;
+      }
+      return selected;
+    } catch (err) {
+      console.warn('Native dialog plugin failed, falling back to invoke:', err);
+      try {
+        return await invoke<string | null>('select_directory');
+      } catch {
+        return null;
+      }
+    }
   },
 
   onPtyOutput(

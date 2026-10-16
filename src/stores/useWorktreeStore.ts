@@ -17,7 +17,13 @@ interface WorktreeState {
 }
 
 export const useWorktreeStore = create<WorktreeState>((set, get) => ({
-  repoPath: null,
+  repoPath: (() => {
+    try {
+      return localStorage.getItem('vela_repo_path') || null;
+    } catch {
+      return null;
+    }
+  })(),
   worktrees: [],
   activeWorktreeId: null,
   isLoading: false,
@@ -28,6 +34,9 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
     try {
       const root = await tauriIpc.findGitRepo(path);
       if (root) {
+        try {
+          localStorage.setItem('vela_repo_path', root);
+        } catch {}
         set({ repoPath: root });
         const list = await tauriIpc.listWorktrees(root);
         set({

@@ -20,7 +20,7 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive }) => 
   useEffect(() => {
     if (!containerRef.current) return;
 
-    // Create xterm instance with clean Orca dark theme
+    // Create xterm instance with clean Vela dark theme
     const term = new Terminal({
       cursorBlink: true,
       cursorStyle: 'bar',
