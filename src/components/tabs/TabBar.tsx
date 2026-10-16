@@ -1,0 +1,162 @@
+import React, { useState, useEffect } from 'react';
+import { useTerminalStore } from '../../stores/useTerminalStore';
+import { NewTabDropdown } from './NewTabDropdown';
+import { X, Terminal, Bot, Columns2, Rows2, Square } from 'lucide-react';
+
+interface TabBarProps {
+  onOpenTerminalModal: () => void;
+}
+
+export const TabBar: React.FC<TabBarProps> = ({ onOpenTerminalModal }) => {
+  const {
+    sessions,
+    activeSessionId,
+    secondarySessionId,
+    splitMode,
+    setActiveSession,
+    closeSession,
+    setSplitMode,
+    renameSession,
+  } = useTerminalStore();
+
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState('');
+
+  // Global Ctrl+T shortcut: opens Directory & Launch Modal
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.key.toLowerCase() === 't') {
+        e.preventDefault();
+        onOpenTerminalModal();
+      } else if (e.ctrlKey && e.key.toLowerCase() === 'w') {
+        e.preventDefault();
+        if (activeSessionId) {
+          closeSession(activeSessionId);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [activeSessionId, onOpenTerminalModal, closeSession]);
+
+  const handleStartRename = (id: string, currentTitle: string) => {
+    setEditingId(id);
+    setEditTitle(currentTitle);
+  };
+
+  const handleFinishRename = (id: string) => {
+    if (editTitle.trim()) {
+      renameSession(id, editTitle.trim());
+    }
+    setEditingId(null);
+  };
+
+  return (
+    <div className="h-9 shrink-0 bg-orca-darker border-b border-orca-border flex items-center justify-between px-2 gap-2 select-none">
+      {/* Left: Scrollable Tabs */}
+      <div className="flex items-center gap-1 overflow-x-auto flex-1 no-scrollbar h-full py-1">
+        {sessions.map((session) => {
+          const isActive = session.id === activeSessionId;
+          const isSecondary = session.id === secondarySessionId;
+
+          return (
+            <div
+              key={session.id}
+              onClick={() => setActiveSession(session.id)}
+              onDoubleClick={() => handleStartRename(session.id, session.title)}
+              className={`group h-7 px-2.5 rounded flex items-center gap-2 text-xs cursor-pointer transition-all border shrink-0 max-w-[190px] ${
+                isActive
+                  ? 'bg-orca-card border-orca-borderLight text-white font-medium shadow-sm'
+                  : isSecondary
+                  ? 'bg-orca-dark/60 border-orca-accent/40 text-orca-text'
+                  : 'bg-transparent border-transparent text-orca-muted hover:text-orca-text hover:bg-orca-hover'
+              }`}
+            >
+              {session.is_agent ? (
+                <Bot className="w-3.5 h-3.5 text-orca-emerald shrink-0" />
+              ) : (
+                <Terminal className="w-3.5 h-3.5 text-orca-muted shrink-0" />
+              )}
+
+              {editingId === session.id ? (
+                <input
+                  type="text"
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  onBlur={() => handleFinishRename(session.id)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleFinishRename(session.id)}
+                  autoFocus
+                  className="bg-orca-darkest text-white px-1 py-0.5 rounded border border-orca-accent outline-none text-xs w-24"
+                />
+              ) : (
+                <span className="truncate flex-1">{session.title}</span>
+              )}
+
+              {/* Close Button */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  closeSession(session.id);
+                }}
+                className="opacity-0 group-hover:opacity-100 hover:bg-orca-hover hover:text-orca-rose rounded p-0.5 transition-all text-orca-muted"
+                title="Close Tab (Ctrl+W)"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+          );
+        })}
+
+        {/* Instant New Tab Button Dropdown */}
+        <div className="ml-1">
+          <NewTabDropdown onOpenTerminalModal={onOpenTerminalModal} />
+        </div>
+      </div>
+
+      {/* Right: Split Screen Controls */}
+      <div className="flex items-center gap-1 border-l border-orca-border pl-2 shrink-0">
+        <button
+          onClick={() => setSplitMode('none')}
+          className={`w-7 h-7 flex items-center justify-center rounded border transition-colors ${
+            splitMode === 'none'
+              ? 'bg-orca-card border-orca-border text-white'
+              : 'border-transparent text-orca-muted hover:text-white hover:bg-orca-hover'
+          }`}
+          title="Single Pane"
+        >
+          <Square className="w-3.5 h-3.5" />
+        </button>
+
+        <button
+          onClick={() => setSplitMode('vertical')}
+          disabled={sessions.length < 2}
+          className={`w-7 h-7 flex items-center justify-center rounded border transition-colors ${
+            splitMode === 'vertical'
+              ? 'bg-orca-card border-orca-border text-white'
+              : sessions.length < 2
+              ? 'opacity-30 cursor-not-allowed border-transparent text-orca-muted'
+              : 'border-transparent text-orca-muted hover:text-white hover:bg-orca-hover'
+          }`}
+          title="Split Vertically"
+        >
+          <Columns2 className="w-3.5 h-3.5" />
+        </button>
+
+        <button
+          onClick={() => setSplitMode('horizontal')}
+          disabled={sessions.length < 2}
+          className={`w-7 h-7 flex items-center justify-center rounded border transition-colors ${
+            splitMode === 'horizontal'
+              ? 'bg-orca-card border-orca-border text-white'
+              : sessions.length < 2
+              ? 'opacity-30 cursor-not-allowed border-transparent text-orca-muted'
+              : 'border-transparent text-orca-muted hover:text-white hover:bg-orca-hover'
+          }`}
+          title="Split Horizontally"
+        >
+          <Rows2 className="w-3.5 h-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+};
