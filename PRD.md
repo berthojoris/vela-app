@@ -1,4 +1,6 @@
 # Product Requirement Document (PRD)
+
+> Aspirational specification. For implemented behaviour, safety limits, and verification commands, see `README.md`. Historical performance figures below are targets, not measured release benchmarks.
 ## Project: Orca-RS (Agent Development Environment & Worktree Terminal Manager)
 
 ---

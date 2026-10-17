@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   GitBranch,
   Plus,
@@ -17,6 +17,9 @@ import { useWorktreeStore } from '../../stores/useWorktreeStore';
 import { useTerminalStore } from '../../stores/useTerminalStore';
 import { useDiffStore } from '../../stores/useDiffStore';
 import { TerminalIcon } from '../terminal/TerminalIcon';
+import { ConfirmDialog } from '../common/ConfirmDialog';
+import { errorMessage } from '../../lib/errors';
+import { useNoticeStore } from '../../stores/useNoticeStore';
 
 interface WorktreeSidebarProps {
   onOpenCreateModal: () => void;
@@ -24,6 +27,11 @@ interface WorktreeSidebarProps {
 
 export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateModal }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [removal, setRemoval] = useState<{ path: string; branch: string; repo: string | null } | null>(null);
+  const [removeError, setRemoveError] = useState<string | null>(null);
+  const [removing, setRemoving] = useState(false);
+  const removingRef = useRef(false);
+  const launching = useRef(new Set<string>());
 
   const {
     repoPath,
@@ -31,6 +39,7 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
     activeWorktreeId,
     activeSessionCwd,
     isLoading,
+    isMutating,
     error,
     refreshWorktrees,
     removeWorktree,
@@ -48,7 +57,7 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
     const norm = (p: string) => p.trim().replace(/\\/g, '/').toLowerCase();
     const targetPath = norm(wt.path);
     const existing = sessions.find(
-      (s) => s.worktree_id === wt.id || norm(s.cwd) === targetPath
+      (s) => !s.exited && (s.worktree_id === wt.id || norm(s.cwd) === targetPath)
     );
     if (existing) {
       setActiveSession(existing.id);
@@ -59,7 +68,7 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
     const norm = (p: string) => p.trim().replace(/\\/g, '/').toLowerCase();
     const targetPath = norm(path);
     const existing = sessions.find(
-      (s) => s.worktree_id === worktreeId || norm(s.cwd) === targetPath
+      (s) => !s.exited && (s.worktree_id === worktreeId || norm(s.cwd) === targetPath)
     );
 
     if (existing) {
@@ -67,11 +76,30 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
       return;
     }
 
-    createSession({
+    if (launching.current.has(worktreeId)) return;
+    launching.current.add(worktreeId);
+    void createSession({
       title: branch,
       cwd: path,
       worktreeId,
-    });
+    }).catch((error) => useNoticeStore.getState().report('Unable to open terminal in worktree', error))
+      .finally(() => launching.current.delete(worktreeId));
+  };
+
+  const confirmRemoval = async () => {
+    if (!removal || removingRef.current) return;
+    const norm = (path: string) => path.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+    if (removal.repo !== useWorktreeStore.getState().repoPath) { setRemoveError('The active repository changed. Cancel and select the worktree again.'); return; }
+    if (useTerminalStore.getState().sessions.some((session) => !session.exited && (norm(session.cwd) === norm(removal.path) || norm(session.cwd).startsWith(`${norm(removal.path)}/`)))) {
+      setRemoveError('Close the terminals running in this worktree before removing it.');
+      return;
+    }
+    removingRef.current = true;
+    setRemoving(true);
+    setRemoveError(null);
+    try { await removeWorktree(removal.path); setRemoval(null); }
+    catch (error) { setRemoveError(errorMessage(error)); }
+    finally { removingRef.current = false; setRemoving(false); }
   };
 
   if (isCollapsed) {
@@ -98,7 +126,7 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
   }
 
   return (
-    <aside className="w-64 bg-orca-darker border-r border-orca-border flex flex-col select-none shrink-0 h-full text-xs">
+    <><aside className="w-64 bg-orca-darker border-r border-orca-border flex flex-col select-none shrink-0 h-full text-xs">
       {/* Header */}
       <div className="h-9 px-3 border-b border-orca-border flex items-center justify-between">
         <div className="flex items-center gap-1.5 font-semibold text-white">
@@ -114,7 +142,7 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
         <div className="flex items-center gap-1">
           <button
             onClick={() => refreshWorktrees()}
-            disabled={isLoading || !repoPath}
+            disabled={isLoading || isMutating || !repoPath}
             className="p-1 rounded hover:bg-orca-hover text-orca-muted hover:text-white transition-colors disabled:opacity-40 cursor-pointer"
             title="Refresh Worktrees"
           >
@@ -275,12 +303,12 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            if (confirm(`Remove worktree for branch '${wt.branch}'?`)) {
-                              removeWorktree(wt.path);
-                            }
+                            setRemoveError(null);
+                            setRemoval({ path: wt.path, branch: wt.branch, repo: repoPath });
                           }}
                           className="h-6 w-6 rounded bg-orca-hover hover:bg-orca-rose/20 text-orca-muted hover:text-orca-rose flex items-center justify-center transition-colors cursor-pointer"
                           title="Remove Worktree"
+                          disabled={isMutating}
                         >
                           <Trash2 className="w-3 h-3" />
                         </button>
@@ -319,6 +347,7 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
         <div className="p-2 border-t border-orca-border">
           <button
             onClick={onOpenCreateModal}
+            disabled={isMutating || isLoading}
             className="w-full h-8 rounded-md bg-orca-accent hover:bg-orca-accentHover text-white font-medium flex items-center justify-center gap-1.5 transition-colors shadow-sm cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5" />
@@ -327,5 +356,7 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
         </div>
       )}
     </aside>
+    {removal && <ConfirmDialog title={`Remove ${removal.branch}?`} description={`This removes the worktree directory, not its branch. Git will refuse to remove uncommitted changes.\n${removal.path}`} busy={removing} error={removeError} onCancel={() => setRemoval(null)} onConfirm={() => { void confirmRemoval(); }} />}
+    </>
   );
 };

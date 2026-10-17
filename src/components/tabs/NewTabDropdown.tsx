@@ -1,8 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Plus, ChevronDown, Sparkles, FolderOpen } from 'lucide-react';
 import { TerminalIcon } from '../terminal/TerminalIcon';
 import { useTerminalStore } from '../../stores/useTerminalStore';
 import { useWorktreeStore } from '../../stores/useWorktreeStore';
+import { useNoticeStore } from '../../stores/useNoticeStore';
+import { ShellProfile } from '../../types';
 
 interface NewTabDropdownProps {
   onOpenTerminalModal: () => void;
@@ -11,6 +14,10 @@ interface NewTabDropdownProps {
 export const NewTabDropdown: React.FC<NewTabDropdownProps> = ({ onOpenTerminalModal }) => {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const launchRef = useRef(false);
+  const [launching, setLaunching] = useState(false);
+  const [position, setPosition] = useState({ left: 0, top: 0 });
   const { profiles, createSession } = useTerminalStore();
   const { repoPath, worktrees, activeWorktreeId } = useWorktreeStore();
 
@@ -19,7 +26,7 @@ export const NewTabDropdown: React.FC<NewTabDropdownProps> = ({ onOpenTerminalMo
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node) && !menuRef.current?.contains(e.target as Node)) {
         setIsOpen(false);
       }
     };
@@ -27,8 +34,21 @@ export const NewTabDropdown: React.FC<NewTabDropdownProps> = ({ onOpenTerminalMo
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const handleSelectProfile = (profile: any) => {
-    createSession({
+  useEffect(() => {
+    if (!isOpen) return;
+    menuRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
+    const close = () => setIsOpen(false);
+    const key = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.stopPropagation(); setIsOpen(false); dropdownRef.current?.querySelectorAll('button')[1]?.focus(); } };
+    window.addEventListener('resize', close);
+    window.addEventListener('keydown', key);
+    return () => { window.removeEventListener('resize', close); window.removeEventListener('keydown', key); };
+  }, [isOpen]);
+
+  const handleSelectProfile = (profile: ShellProfile) => {
+    if (launchRef.current) return;
+    launchRef.current = true;
+    setLaunching(true);
+    void createSession({
       shell: profile.executable,
       args: profile.args,
       title: profile.name,
@@ -36,7 +56,8 @@ export const NewTabDropdown: React.FC<NewTabDropdownProps> = ({ onOpenTerminalMo
       worktreeId: activeWorktree?.id,
       isAgent: profile.is_agent,
       agentType: profile.agent_type,
-    });
+    }).catch((error) => useNoticeStore.getState().report(`Unable to launch ${profile.name}`, error))
+      .finally(() => { launchRef.current = false; setLaunching(false); });
     setIsOpen(false);
   };
 
@@ -56,7 +77,14 @@ export const NewTabDropdown: React.FC<NewTabDropdownProps> = ({ onOpenTerminalMo
 
       {/* Dropdown toggle for instant shell presets */}
       <button
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={() => {
+          const rect = dropdownRef.current?.getBoundingClientRect();
+          if (rect) setPosition({ left: Math.max(8, Math.min(rect.left, window.innerWidth - 248)), top: rect.bottom + 4 });
+          setIsOpen(!isOpen);
+        }}
+        disabled={launching}
+        aria-expanded={isOpen}
+        aria-label="Quick shell options"
         className="h-7 px-1 flex items-center justify-center text-orca-muted hover:text-white hover:bg-orca-hover rounded-r border border-orca-border transition-colors text-xs"
         title="Quick Shell Options"
       >
@@ -64,8 +92,8 @@ export const NewTabDropdown: React.FC<NewTabDropdownProps> = ({ onOpenTerminalMo
       </button>
 
       {/* Dropdown Menu */}
-      {isOpen && (
-        <div className="absolute top-9 left-0 w-60 bg-orca-card border border-orca-border rounded-lg shadow-2xl py-1 z-50 text-xs">
+      {isOpen && createPortal(
+        <div ref={menuRef} style={position} className="fixed w-60 max-h-[70vh] overflow-y-auto bg-orca-card border border-orca-border rounded-lg py-1 z-50 text-xs">
           {/* Quick Option to Open in Directory */}
           <button
             onClick={() => {
@@ -98,7 +126,7 @@ export const NewTabDropdown: React.FC<NewTabDropdownProps> = ({ onOpenTerminalMo
                   shell={p.executable}
                   title={p.name}
                   isAgent={p.is_agent}
-                  agentType={p.agent_type as any}
+                  agentType={p.agent_type}
                   className="w-3.5 h-3.5"
                 />
                 <span className="font-medium">{p.name}</span>
@@ -130,13 +158,13 @@ export const NewTabDropdown: React.FC<NewTabDropdownProps> = ({ onOpenTerminalMo
                 shell={p.executable}
                 title={p.name}
                 isAgent={p.is_agent}
-                agentType={p.agent_type as any}
+                agentType={p.agent_type}
                 className="w-3.5 h-3.5"
               />
               <span>{p.name}</span>
             </button>
           ))}
-        </div>
+        </div>, document.body
       )}
     </div>
   );

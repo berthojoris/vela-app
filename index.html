@@ -1,13 +1,31 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en" class="dark" style="background-color: #030306; color-scheme: dark;">
   <head>
     <meta charset="UTF-8" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#030306" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Vela — Agent Development Environment</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        background-color: #030306;
+      }
+      html, body {
+        background-color: #030306 !important;
+        color: #f4f4f6;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+      }
+      #root {
+        background-color: #030306;
+      }
+    </style>
   </head>
-  <body class="bg-orca-darkest text-orca-text select-none overflow-hidden m-0 p-0 font-sans antialiased">
-    <div id="root" class="h-screen w-screen flex flex-col overflow-hidden"></div>
+  <body style="background-color: #030306;" class="bg-[#030306] text-orca-text select-none overflow-hidden m-0 p-0 font-sans antialiased">
+    <div id="root" style="background-color: #030306;" class="h-screen w-screen flex flex-col overflow-hidden"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

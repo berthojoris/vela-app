@@ -1,7 +1,9 @@
-import React from 'react';
+import React, { lazy, Suspense } from 'react';
 import { useTerminalStore } from '../../stores/useTerminalStore';
 import { useWorktreeStore } from '../../stores/useWorktreeStore';
-import { XTermView } from './XTermView';
+import { ErrorBoundary } from '../common/ErrorBoundary';
+import { useNoticeStore } from '../../stores/useNoticeStore';
+const XTermView = lazy(() => import('./XTermView').then((module) => ({ default: module.XTermView })));
 import { Terminal, Plus, Bot, GitBranch, Sparkles } from 'lucide-react';
 
 interface TerminalGridProps {
@@ -16,6 +18,7 @@ export const TerminalGrid: React.FC<TerminalGridProps> = ({
   const {
     sessions,
     activeSessionId,
+    primarySessionId,
     secondarySessionId,
     splitMode,
     createSession,
@@ -28,7 +31,7 @@ export const TerminalGrid: React.FC<TerminalGridProps> = ({
 
   if (sessions.length === 0) {
     return (
-      <div className="flex-1 bg-orca-darkest flex flex-col items-center justify-center p-8 select-none">
+      <div className="h-full bg-orca-darkest flex flex-col items-center justify-center p-8 select-none">
         <div className="w-14 h-14 rounded-2xl bg-orca-card border border-orca-border flex items-center justify-center text-orca-accent mb-4 shadow-lg">
           <Terminal className="w-7 h-7" />
         </div>
@@ -68,7 +71,7 @@ export const TerminalGrid: React.FC<TerminalGridProps> = ({
     );
   }
 
-  const activeSession = sessions.find((s) => s.id === activeSessionId) || sessions[0];
+  const activeSession = sessions.find((s) => s.id === (splitMode === 'none' ? activeSessionId : primarySessionId)) || sessions[0];
   const secondarySession = sessions.find((s) => s.id === secondarySessionId);
 
   const hasDistinctSecondary = secondarySession && secondarySession.id !== activeSession.id;
@@ -86,25 +89,26 @@ export const TerminalGrid: React.FC<TerminalGridProps> = ({
   ];
 
   const containerClass = isVerticalSplit
-    ? 'flex-1 flex overflow-hidden'
+    ? 'h-full w-full flex overflow-hidden'
     : isHorizontalSplit
-    ? 'flex-1 flex flex-col overflow-hidden'
+    ? 'h-full w-full flex flex-col overflow-hidden'
     : 'flex-1 h-full w-full overflow-hidden';
 
   return (
     <div className={containerClass}>
       {orderedSessions.map((session) => {
-        const isActive = session.id === activeSession.id;
+        const isPrimary = session.id === activeSession.id;
+        const isActive = session.id === activeSessionId;
         const isSecondary = showSecondary && session.id === secondarySession?.id;
-        const isVisible = isActive || isSecondary;
+        const isVisible = isPrimary || isSecondary;
         const paneClass = !isVisible
           ? 'hidden'
           : isVerticalSplit
-          ? isActive
+          ? isPrimary
             ? 'w-1/2 h-full border-r border-orca-border relative'
             : 'w-1/2 h-full relative'
           : isHorizontalSplit
-          ? isActive
+          ? isPrimary
             ? 'h-1/2 w-full border-b border-orca-border relative'
             : 'h-1/2 w-full relative'
           : 'w-full h-full relative';
@@ -114,8 +118,13 @@ export const TerminalGrid: React.FC<TerminalGridProps> = ({
             key={session.id}
             className={paneClass}
             onClick={isVisible ? () => setActiveSession(session.id) : undefined}
+            onFocusCapture={isVisible ? () => setActiveSession(session.id) : undefined}
           >
-            <XTermView sessionId={session.id} isActive={isActive} />
+            <ErrorBoundary onClose={() => { void useTerminalStore.getState().closeSession(session.id).catch((error) => useNoticeStore.getState().report('Unable to close terminal', error)); }}>
+              <Suspense fallback={<div role="status" className="p-4 text-sm text-orca-muted">Loading terminal…</div>}>
+                <XTermView sessionId={session.id} isActive={isActive} />
+              </Suspense>
+            </ErrorBoundary>
           </div>
         );
       })}

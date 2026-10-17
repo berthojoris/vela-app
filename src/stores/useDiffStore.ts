@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { FileDiff } from '../types';
 import { tauriIpc } from '../lib/tauriIpc';
+import { errorMessage } from '../lib/errors';
 
 interface DiffState {
   isOpen: boolean;
@@ -12,7 +13,7 @@ interface DiffState {
   error: string | null;
   commitError: string | null;
   commitMessage: string;
-
+  commitResult: string | null;
   openDiffModal: (path: string) => Promise<void>;
   closeDiffModal: () => void;
   selectFile: (file: FileDiff) => void;
@@ -22,6 +23,8 @@ interface DiffState {
   clearCommitError: () => void;
   clearAllErrors: () => void;
 }
+
+let requestSequence = 0;
 
 export const useDiffStore = create<DiffState>((set, get) => ({
   isOpen: false,
@@ -33,132 +36,79 @@ export const useDiffStore = create<DiffState>((set, get) => ({
   error: null,
   commitError: null,
   commitMessage: '',
+  commitResult: null,
 
-  openDiffModal: async (path: string) => {
+  openDiffModal: async (path) => {
+    // A commit is not cancellable: keep its target and message visible until it finishes.
+    if (get().isCommitting) return;
+    ++requestSequence;
     set({
-      isOpen: true,
-      worktreePath: path,
-      isLoading: true,
-      error: null,
-      commitError: null,
-      diffs: [],
-      selectedFile: null,
+      isOpen: true, worktreePath: path, diffs: [], selectedFile: null,
+      isLoading: false, error: null, commitError: null, commitMessage: '', commitResult: null,
     });
-
-    try {
-      const files = await tauriIpc.getWorktreeDiff(path);
-      set({
-        diffs: files,
-        selectedFile: files.length > 0 ? files[0] : null,
-        isLoading: false,
-        error: null,
-      });
-    } catch (err: any) {
-      const errMsg = typeof err === 'string' ? err : err?.message || 'Failed to inspect worktree changes.';
-      console.error('Failed to load diffs:', errMsg);
-      set({
-        isLoading: false,
-        error: errMsg,
-        diffs: [],
-        selectedFile: null,
-      });
-    }
+    await get().refreshDiffs();
   },
 
   refreshDiffs: async () => {
-    const { worktreePath, selectedFile } = get();
-    if (!worktreePath) return;
-
+    const { worktreePath, isOpen, isCommitting } = get();
+    if (!worktreePath || !isOpen || isCommitting) return;
+    const request = ++requestSequence;
+    const current = () => request === requestSequence && get().isOpen && get().worktreePath === worktreePath;
     set({ isLoading: true, error: null });
     try {
       const files = await tauriIpc.getWorktreeDiff(worktreePath);
-      const stillSelected = selectedFile
-        ? files.find((f) => f.path === selectedFile.path)
-        : null;
-
+      if (!current()) return;
+      const selected = get().selectedFile?.path;
       set({
         diffs: files,
-        selectedFile: stillSelected || (files.length > 0 ? files[0] : null),
+        selectedFile: files.find((file) => file.path === selected) ?? files[0] ?? null,
         isLoading: false,
-        error: null,
       });
-    } catch (err: any) {
-      const errMsg = typeof err === 'string' ? err : err?.message || 'Failed to refresh diffs.';
-      console.error('Failed to refresh diffs:', errMsg);
-      set({
-        isLoading: false,
-        error: errMsg,
-      });
+    } catch (error) {
+      if (current()) set({ isLoading: false, error: errorMessage(error, 'Unable to inspect changes. Check that the worktree still exists, then refresh.') });
     }
   },
 
   closeDiffModal: () => {
+    if (get().isCommitting) return;
+    ++requestSequence;
     set({
-      isOpen: false,
-      worktreePath: null,
-      diffs: [],
-      selectedFile: null,
-      isLoading: false,
-      isCommitting: false,
-      error: null,
-      commitError: null,
-      commitMessage: '',
+      isOpen: false, worktreePath: null, diffs: [], selectedFile: null,
+      isLoading: false, error: null, commitError: null, commitMessage: '', commitResult: null,
     });
   },
-
-  selectFile: (file: FileDiff) => {
-    set({ selectedFile: file });
+  selectFile: (file) => {
+    const selected = get().diffs.find((candidate) => candidate.path === file.path);
+    if (selected) set({ selectedFile: selected });
   },
-
-  setCommitMessage: (msg: string) => {
-    set({ commitMessage: msg, commitError: null });
+  setCommitMessage: (commitMessage) => {
+    if (!get().isCommitting) set({ commitMessage, commitError: null });
   },
-
-  clearCommitError: () => {
-    set({ commitError: null });
-  },
-
-  clearAllErrors: () => {
-    set({ error: null, commitError: null });
-  },
+  clearCommitError: () => set({ commitError: null }),
+  clearAllErrors: () => set({ error: null, commitError: null }),
 
   commit: async () => {
-    const { worktreePath, commitMessage } = get();
-    const cleanMsg = commitMessage.trim();
-
-    if (!worktreePath) {
-      const msg = 'No active worktree path selected.';
-      set({ commitError: msg });
-      throw new Error(msg);
+    const state = get();
+    const worktreePath = state.worktreePath;
+    const message = state.commitMessage.trim();
+    if (state.isCommitting) throw new Error('A commit is already running. Please wait.');
+    if (!state.isOpen || !worktreePath || state.isLoading || state.error || !state.diffs.length) {
+      throw new Error('Refresh and review the current worktree before committing.');
     }
-    if (!cleanMsg) {
-      const msg = 'Commit message cannot be empty.';
-      set({ commitError: msg });
-      throw new Error(msg);
-    }
-
-    set({ isCommitting: true, commitError: null });
+    if (!message) throw new Error('Enter a commit message.');
+    ++requestSequence; // Invalidate every earlier diff response before mutating Git.
+    set({ isCommitting: true, commitError: null, commitResult: null });
+    let result: string;
     try {
-      const res = await tauriIpc.commitWorktree(worktreePath, cleanMsg);
-
-      // Refresh diffs after successful commit
-      const files = await tauriIpc.getWorktreeDiff(worktreePath);
-      set({
-        diffs: files,
-        selectedFile: files.length > 0 ? files[0] : null,
-        commitMessage: '',
-        isCommitting: false,
-        commitError: null,
-      });
-      return res;
-    } catch (err: any) {
-      const errMsg = typeof err === 'string' ? err : err?.message || 'Git commit failed.';
-      console.error('Failed to commit worktree:', errMsg);
-      set({
-        isCommitting: false,
-        commitError: errMsg,
-      });
-      throw new Error(errMsg);
+      result = await tauriIpc.commitWorktree(worktreePath, message);
+    } catch (error) {
+      const detail = errorMessage(error, 'Git could not create the commit. Your message has been preserved.');
+      set({ isCommitting: false, commitError: detail });
+      throw new Error(detail);
     }
+    // Refresh failure must never turn an already successful commit into "commit failed".
+    set({ isCommitting: false, commitMessage: '', commitResult: result });
+    await get().refreshDiffs();
+    return result;
   },
 }));

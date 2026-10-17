@@ -3,6 +3,7 @@ import { useTerminalStore } from '../../stores/useTerminalStore';
 import { NewTabDropdown } from './NewTabDropdown';
 import { TerminalIcon } from '../terminal/TerminalIcon';
 import { X, Columns2, Rows2, Square } from 'lucide-react';
+import { useNoticeStore } from '../../stores/useNoticeStore';
 
 interface TabBarProps {
   onOpenTerminalModal: () => void;
@@ -27,25 +28,30 @@ export const TabBar: React.FC<TabBarProps> = ({ onOpenTerminalModal }) => {
     try {
       await closeSession(id);
     } catch (err: any) {
-      alert(`Failed to close terminal: ${err.message || err}`);
+      useNoticeStore.getState().report('Unable to close terminal', err);
     }
   }, [closeSession]);
 
   // Global Ctrl+T shortcut: opens Directory & Launch Modal
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.key.toLowerCase() === 't') {
-        e.preventDefault();
+      const key = e.key.toLowerCase();
+      if (!e.ctrlKey || (key !== 't' && key !== 'w')) return;
+      // Capture before xterm consumes the event; never send these app shortcuts
+      // to the PTY or let WebView/Edge close a tab while a modal is open.
+      e.preventDefault();
+      e.stopPropagation();
+      if (document.querySelector('[aria-modal="true"]')) return;
+      if (key === 't') {
         onOpenTerminalModal();
-      } else if (e.ctrlKey && e.key.toLowerCase() === 'w') {
-        e.preventDefault();
+      } else if (key === 'w') {
         if (activeSessionId) {
           void handleCloseSession(activeSessionId);
         }
       }
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
   }, [activeSessionId, onOpenTerminalModal, handleCloseSession]);
 
   const handleStartRename = (id: string, currentTitle: string) => {
@@ -86,7 +92,7 @@ export const TabBar: React.FC<TabBarProps> = ({ onOpenTerminalModal }) => {
                 shell={session.shell}
                 title={session.title}
                 isAgent={session.is_agent}
-                agentType={session.agent_type as any}
+                agentType={session.agent_type}
                 className="w-3.5 h-3.5 shrink-0"
               />
               {session.exited && (

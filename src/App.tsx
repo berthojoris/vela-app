@@ -7,12 +7,13 @@ import { WorktreeSidebar } from './components/sidebar/WorktreeSidebar';
 import { DiffViewerModal } from './components/diff/DiffViewerModal';
 import { CreateWorktreeModal } from './components/modals/CreateWorktreeModal';
 import { OpenTerminalModal } from './components/modals/OpenTerminalModal';
-import { SplashScreen } from './components/splash/SplashScreen';
+import { NoticeRegion } from './components/common/NoticeRegion';
+import { useNoticeStore } from './stores/useNoticeStore';
+import { tauriIpc } from './lib/tauriIpc';
 import { useTerminalStore } from './stores/useTerminalStore';
 import { useWorktreeStore } from './stores/useWorktreeStore';
 
 export const App: React.FC = () => {
-  const [showSplash, setShowSplash] = useState(true);
   const [isCreateWorktreeOpen, setIsCreateWorktreeOpen] = useState(false);
   const [isOpenTerminalModalOpen, setIsOpenTerminalModalOpen] = useState(false);
   const [modalInitialProfileId, setModalInitialProfileId] = useState<string | undefined>(undefined);
@@ -30,6 +31,24 @@ export const App: React.FC = () => {
 
     // 2. Ensure initial worktree panel is empty with no leftover history
     initRepo();
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void tauriIpc.onAppError((message) => useNoticeStore.getState().report('Vela', message))
+      .then((cleanup) => { if (disposed) cleanup(); else unlisten = cleanup; })
+      .catch((error) => useNoticeStore.getState().report('Unable to subscribe to application errors', error));
+    const handleRejection = (event: PromiseRejectionEvent) => useNoticeStore.getState().report('An operation could not finish', event.reason);
+    const handleError = (event: ErrorEvent) => useNoticeStore.getState().report('An interface operation failed', event.error ?? event.message);
+    window.addEventListener('unhandledrejection', handleRejection);
+    window.addEventListener('error', handleError);
+    return () => {
+      disposed = true;
+      unlisten?.();
+      window.removeEventListener('unhandledrejection', handleRejection);
+      window.removeEventListener('error', handleError);
+    };
   }, []);
 
   // Sync active worktree/repo whenever active terminal tab changes
@@ -65,13 +84,9 @@ export const App: React.FC = () => {
 
   return (
     <div className="h-screen w-screen flex flex-col bg-orca-darkest text-orca-text overflow-hidden select-none font-sans relative">
-      {/* 🌌 Cosmic Space Splash Screen (3.5s smooth intro) */}
-      {showSplash && (
-        <SplashScreen onComplete={() => setShowSplash(false)} />
-      )}
-
       {/* Frameless Top Window Bar */}
       <TitleBar />
+      <NoticeRegion />
 
       {/* Main App Workspace */}
       <div className="flex-1 flex overflow-hidden">

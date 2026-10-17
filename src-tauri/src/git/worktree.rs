@@ -1,38 +1,116 @@
 use crate::models::{FileDiff, GitWorktree};
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use crate::process::{hidden_command, output};
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
+use std::process::{Command, Output};
+use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
+const MAX_FILES: usize = 500;
+const MAX_DIFF: usize = 8 * 1024 * 1024;
+const FILE_PREVIEW: usize = 32 * 1024;
+const TOTAL_PREVIEW: usize = 2 * 1024 * 1024;
 
-const CREATE_NO_WINDOW: u32 = 0x08000000;
+static MUTATIONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+struct Mutation(String);
+impl Mutation {
+    fn begin(path: &str) -> Result<Self, String> {
+        let key = GitManager::normalize_path(path).to_lowercase();
+        let mut operations = MUTATIONS
+            .get_or_init(Default::default)
+            .lock()
+            .map_err(|_| "Git operation registry is unavailable")?;
+        if !operations.insert(key.clone()) {
+            return Err(
+                "Another Git write is already running for this worktree. Please wait.".into(),
+            );
+        }
+        Ok(Self(key))
+    }
+}
+impl Drop for Mutation {
+    fn drop(&mut self) {
+        if let Some(operations) = MUTATIONS.get() {
+            operations
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .remove(&self.0);
+        }
+    }
+}
 
 pub struct GitManager;
-
 impl GitManager {
+    pub fn has_active_writes() -> bool {
+        MUTATIONS.get().is_some_and(|operations| {
+            operations
+                .lock()
+                .map(|operations| !operations.is_empty())
+                .unwrap_or(true)
+        })
+    }
     fn git_cmd() -> Command {
-        let mut cmd = Command::new("git");
-        #[cfg(windows)]
-        cmd.creation_flags(CREATE_NO_WINDOW);
-        cmd
+        let mut command = hidden_command("git");
+        command
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("GIT_PAGER", "cat");
+        command.args([
+            "--no-pager",
+            "-c",
+            "core.quotepath=false",
+            "-c",
+            "color.ui=false",
+        ]);
+        command
     }
-
-    /// Normalizes Windows, MSYS (/c/...), and standard forward slash paths
+    fn run(command: &mut Command, limit: usize) -> Result<Output, String> {
+        output(command, Duration::from_secs(30), limit)
+    }
+    fn checked(result: Output) -> Result<Output, String> {
+        if result.status.success() {
+            Ok(result)
+        } else {
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            let detail = if stderr.trim().is_empty() {
+                String::from_utf8_lossy(&result.stdout).trim().to_string()
+            } else {
+                stderr.trim().to_string()
+            };
+            Err(if detail.is_empty() {
+                format!("Git exited with status {}", result.status)
+            } else {
+                detail
+            })
+        }
+    }
     pub fn normalize_path(path: &str) -> String {
-        let mut trimmed = path.trim().replace('\\', "/");
-        if trimmed.len() >= 3 && trimmed.starts_with('/') && trimmed.chars().nth(2) == Some('/') {
-            let drive = trimmed.chars().nth(1).unwrap();
-            if drive.is_ascii_alphabetic() {
-                trimmed = format!("{}:/{}", drive.to_ascii_uppercase(), &trimmed[3..]);
-            }
+        let mut path = path.trim().replace('\\', "/");
+        let bytes = path.as_bytes();
+        if bytes.len() >= 3
+            && bytes[0] == b'/'
+            && bytes[1].is_ascii_alphabetic()
+            && bytes[2] == b'/'
+        {
+            path = format!(
+                "{}:/{}",
+                (bytes[1] as char).to_ascii_uppercase(),
+                &path[3..]
+            );
         }
-        if trimmed.len() > 3 && trimmed.ends_with('/') {
-            trimmed.pop();
+        while path.len() > 3 && path.ends_with('/') {
+            path.pop();
         }
-        trimmed
+        path
     }
-
-    /// Deterministic stable ID for a worktree based on its path
+    fn directory(path: &str) -> Result<String, String> {
+        let path = Self::normalize_path(path);
+        if path.is_empty() || !Path::new(&path).is_dir() {
+            return Err(format!(
+                "Directory does not exist or is inaccessible: {path}"
+            ));
+        }
+        Ok(path)
+    }
     pub fn generate_worktree_id(path: &str) -> String {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
@@ -40,593 +118,539 @@ impl GitManager {
         Self::normalize_path(path).to_lowercase().hash(&mut hasher);
         format!("wt-{:016x}", hasher.finish())
     }
-
-    /// Detects if a directory is inside a Git repository
-    pub fn find_repo_root(start_dir: Option<&str>) -> Option<String> {
-        let normalized = start_dir
-            .map(Self::normalize_path)
-            .filter(|s| !s.is_empty());
-
-        let (target_dir, is_explicit_path) = match normalized.as_deref() {
-            Some(dir) if dir != "/" && dir != "\\" && dir != "." && dir != "/index.html" => {
-                (Some(dir.to_string()), true)
-            }
-            _ => (None, false),
+    pub fn find_repo_root(start_dir: Option<&str>) -> Result<Option<String>, String> {
+        let path = match start_dir.filter(|path| !path.trim().is_empty()) {
+            Some(path) => Self::directory(path)?,
+            None => std::env::current_dir()
+                .map_err(|error| error.to_string())?
+                .to_string_lossy()
+                .to_string(),
         };
-
-        let mut cmd = Self::git_cmd();
-        if let Some(ref dir) = target_dir {
-            cmd.args(["-C", dir]);
-        }
-        cmd.args(["rev-parse", "--show-toplevel"]);
-
-        let output = cmd.output().ok()?;
-
-        if output.status.success() {
-            let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            Some(path_str.replace('\\', "/"))
-        } else if let Some(ref dir) = target_dir {
-            // Resilient fallback: traverse upwards to find .git directory or worktree gitlink file
-            let mut curr = PathBuf::from(dir);
-            loop {
-                if curr.join(".git").exists() {
-                    return Some(curr.to_string_lossy().to_string().replace('\\', "/"));
-                }
-                if !curr.pop() {
-                    break;
-                }
-            }
-            None
-        } else if !is_explicit_path {
-            // If running rev-parse in current directory didn't work directly, check std::env::current_dir() explicitly
-            if let Ok(cwd) = std::env::current_dir() {
-                let cwd_str = cwd.to_string_lossy().to_string();
-                let output = Self::git_cmd()
-                    .args(["-C", &cwd_str, "rev-parse", "--show-toplevel"])
-                    .output()
-                    .ok()?;
-                if output.status.success() {
-                    let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                    return Some(path_str.replace('\\', "/"));
-                }
-                let mut curr = cwd;
-                loop {
-                    if curr.join(".git").exists() {
-                        return Some(curr.to_string_lossy().to_string().replace('\\', "/"));
-                    }
-                    if !curr.pop() {
-                        break;
-                    }
-                }
-            }
-            None
+        let result = Self::run(
+            Self::git_cmd().args(["-C", &path, "rev-parse", "--show-toplevel"]),
+            64 * 1024,
+        )?;
+        if result.status.success() {
+            Ok(Some(Self::normalize_path(
+                String::from_utf8_lossy(&result.stdout).trim(),
+            )))
         } else {
-            None
+            let error = String::from_utf8_lossy(&result.stderr);
+            if error.contains("not a git repository") {
+                Ok(None)
+            } else {
+                Self::checked(result).map(|_| None)
+            }
         }
     }
-
-    /// List all git worktrees for a given repository
     pub fn list_worktrees(repo_path: &str) -> Result<Vec<GitWorktree>, String> {
-        let clean_path = Self::normalize_path(repo_path);
-        let output = Self::git_cmd()
-            .args(["-C", &clean_path, "worktree", "list", "--porcelain"])
-            .output()
-            .map_err(|e| format!("Failed to execute git worktree list: {}", e))?;
-
-        if !output.status.success() {
-            let err = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("Git worktree list error: {}", err));
-        }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
+        let path = Self::directory(repo_path)?;
+        let result = Self::checked(Self::run(
+            Self::git_cmd().args(["-C", &path, "worktree", "list", "--porcelain", "-z"]),
+            2 * 1024 * 1024,
+        )?)?;
+        let text = String::from_utf8_lossy(&result.stdout);
         let mut worktrees = Vec::new();
-        let mut current_path = String::new();
-        let mut current_branch = String::new();
-        let mut is_first = true;
-
-        for line in stdout.lines() {
-            let line = line.trim();
-            if line.starts_with("worktree ") {
-                if !current_path.is_empty() {
-                    let dirty_count = Self::get_dirty_file_count(&current_path);
-                    let folder_name = Path::new(&current_path)
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_else(|| "worktree".to_string());
-
-                    let wt_id = Self::generate_worktree_id(&current_path);
-                    worktrees.push(GitWorktree {
-                        id: wt_id,
-                        name: folder_name,
-                        path: current_path.clone().replace('\\', "/"),
-                        branch: current_branch.clone(),
-                        is_main: is_first,
-                        dirty_files_count: dirty_count,
-                        active_agent_name: None,
-                    });
-                    is_first = false;
-                }
-                current_path = line.trim_start_matches("worktree ").to_string();
-                current_branch = "detached".to_string();
-            } else if line.starts_with("branch ") {
-                let branch_ref = line.trim_start_matches("branch ");
-                current_branch = branch_ref.trim_start_matches("refs/heads/").to_string();
-            }
-        }
-
-        // Push last block
-        if !current_path.is_empty() {
-            let dirty_count = Self::get_dirty_file_count(&current_path);
-            let folder_name = Path::new(&current_path)
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "worktree".to_string());
-
-            let wt_id = Self::generate_worktree_id(&current_path);
+        let mut current: Option<(String, String)> = None;
+        let mut append = |path: String, branch: String| -> Result<(), String> {
+            let count = if Path::new(&path).is_dir() {
+                Self::status(&path)?.len()
+            } else {
+                0
+            };
             worktrees.push(GitWorktree {
-                id: wt_id,
-                name: folder_name,
-                path: current_path.replace('\\', "/"),
-                branch: current_branch,
-                is_main: is_first,
-                dirty_files_count: dirty_count,
+                id: Self::generate_worktree_id(&path),
+                name: Path::new(&path)
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "worktree".into()),
+                path: path.replace('\\', "/"),
+                branch,
+                is_main: worktrees.is_empty(),
+                dirty_files_count: count,
                 active_agent_name: None,
             });
+            Ok(())
+        };
+        for field in text.split('\0') {
+            if let Some(path) = field.strip_prefix("worktree ") {
+                if let Some((path, branch)) = current.take() {
+                    append(path, branch)?;
+                }
+                current = Some((path.to_string(), "detached".into()));
+            } else if let Some(branch) = field.strip_prefix("branch refs/heads/") {
+                if let Some((_, current_branch)) = current.as_mut() {
+                    *current_branch = branch.to_string();
+                }
+            } else if field == "bare" {
+                current = None;
+            }
         }
-
+        if let Some((path, branch)) = current {
+            append(path, branch)?;
+        }
         Ok(worktrees)
     }
-
-    /// Creates a new worktree for an isolated task/agent
     pub fn create_worktree(
         repo_path: &str,
         branch: &str,
         base_branch: Option<&str>,
     ) -> Result<GitWorktree, String> {
-        let clean_repo_path = Self::normalize_path(repo_path);
-        let clean_branch = branch.trim().replace(' ', "-");
-        let parent_dir = Path::new(&clean_repo_path)
+        let path = Self::directory(repo_path)?;
+        let _operation = Mutation::begin(&path)?;
+        let branch = branch.trim();
+        if branch.is_empty()
+            || branch.len() > 200
+            || branch.starts_with('-')
+            || branch.contains('\\')
+            || branch.chars().any(char::is_control)
+        {
+            return Err("Enter a valid Git branch name, up to 200 characters, without a leading dash or backslashes.".into());
+        }
+        Self::checked(Self::run(
+            Self::git_cmd().args(["check-ref-format", "--branch", branch]),
+            64 * 1024,
+        )?)?;
+        let base = base_branch
+            .filter(|base| !base.trim().is_empty())
+            .unwrap_or("HEAD")
+            .trim();
+        if base.starts_with('-') || base.len() > 250 || base.chars().any(char::is_control) {
+            return Err("Invalid base branch or revision".into());
+        }
+        // Resolve to an object ID before passing it to worktree add: no option/revision ambiguity.
+        let base_result = Self::checked(Self::run(
+            Self::git_cmd().args([
+                "-C",
+                &path,
+                "rev-parse",
+                "--verify",
+                "--end-of-options",
+                &format!("{base}^{{commit}}"),
+            ]),
+            64 * 1024,
+        )?)?;
+        let base_oid = String::from_utf8_lossy(&base_result.stdout)
+            .trim()
+            .to_string();
+        let repo = Path::new(&path);
+        let parent = repo
             .parent()
-            .ok_or("Cannot determine parent directory of repository")?;
-
-        let repo_folder_name = Path::new(&clean_repo_path)
+            .ok_or("Cannot determine the repository parent directory")?;
+        let name = repo
             .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "repo".to_string());
-
-        let folder_safe_branch = clean_branch.replace('/', "_");
-        let worktree_dir_name = format!("{}-{}", repo_folder_name, folder_safe_branch);
-        let target_path: PathBuf = parent_dir.join(&worktree_dir_name);
-        let target_str = target_path.to_string_lossy().to_string().replace('\\', "/");
-
-        let base = base_branch.unwrap_or("HEAD");
-
-        // Check if branch already exists in git
-        let branch_exists = Self::git_cmd()
-            .args(["-C", &clean_repo_path, "show-ref", "--verify", &format!("refs/heads/{}", clean_branch)])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-
-        let mut cmd = Self::git_cmd();
-        cmd.args(["-C", &clean_repo_path, "worktree", "add"]);
-
-        if branch_exists {
-            cmd.args([&target_str, &clean_branch]);
+            .ok_or("Cannot determine the repository folder name")?
+            .to_string_lossy();
+        // Include a stable suffix to avoid feature/a colliding with feature_a.
+        let safe: String = branch
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() || ch == '-' {
+                    ch
+                } else {
+                    '_'
+                }
+            })
+            .take(80)
+            .collect();
+        let suffix = Self::generate_worktree_id(branch);
+        let target = parent.join(format!("{name}-{safe}-{}", &suffix[3..11]));
+        if target.exists() {
+            return Err(format!(
+                "Worktree destination already exists: {}",
+                target.display()
+            ));
+        }
+        let target = target.to_string_lossy().replace('\\', "/");
+        let exists = Self::run(
+            Self::git_cmd().args([
+                "-C",
+                &path,
+                "show-ref",
+                "--verify",
+                &format!("refs/heads/{branch}"),
+            ]),
+            64 * 1024,
+        )?
+        .status
+        .success();
+        let mut command = Self::git_cmd();
+        command.args(["-C", &path, "worktree", "add"]);
+        if exists {
+            command.args(["--", &target, branch]);
         } else {
-            cmd.args(["-b", &clean_branch, &target_str, base]);
+            command.args(["-b", branch, "--", &target, &base_oid]);
         }
-
-        let output = cmd.output().map_err(|e| format!("Failed to run git worktree add: {}", e))?;
-        if !output.status.success() {
-            let err = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("git worktree add failed: {}", err));
-        }
-
-        let wt_id = Self::generate_worktree_id(&target_str);
+        Self::checked(output(&mut command, Duration::from_secs(120), 256 * 1024)?)?;
         Ok(GitWorktree {
-            id: wt_id,
-            name: worktree_dir_name,
-            path: target_str,
-            branch: clean_branch,
+            id: Self::generate_worktree_id(&target),
+            name: Path::new(&target)
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned(),
+            path: target,
+            branch: branch.into(),
             is_main: false,
             dirty_files_count: 0,
             active_agent_name: None,
         })
     }
-
-    /// Safely removes a worktree and prunes dead entries
-    pub fn remove_worktree(repo_path: &str, worktree_path: &str, force: bool) -> Result<(), String> {
-        let clean_repo_path = Self::normalize_path(repo_path);
-        let clean_worktree_path = Self::normalize_path(worktree_path);
-        let mut cmd = Self::git_cmd();
-        cmd.args(["-C", &clean_repo_path, "worktree", "remove"]);
+    pub fn remove_worktree(
+        repo_path: &str,
+        worktree_path: &str,
+        force: bool,
+    ) -> Result<(), String> {
+        let repo = Self::directory(repo_path)?;
+        let path = Self::directory(worktree_path)?;
+        let _operation = Mutation::begin(&repo)?;
+        let worktrees = Self::list_worktrees(&repo)?;
+        let target = worktrees
+            .iter()
+            .find(|worktree| Self::normalize_path(&worktree.path).eq_ignore_ascii_case(&path))
+            .ok_or("This directory is not a registered worktree")?;
+        if target.is_main {
+            return Err("The main worktree cannot be removed".into());
+        }
+        let mut command = Self::git_cmd();
+        command.args(["-C", &repo, "worktree", "remove"]);
         if force {
-            cmd.arg("--force");
+            command.arg("--force");
         }
-        cmd.arg(&clean_worktree_path);
-
-        let output = cmd.output().map_err(|e| format!("Failed to remove worktree: {}", e))?;
-        if !output.status.success() {
-            let err = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("git worktree remove failed: {}", err));
-        }
-
-        // Prune worktrees
-        let _ = Self::git_cmd()
-            .args(["-C", &clean_repo_path, "worktree", "prune"])
-            .output();
-
+        command.args(["--", &path]);
+        Self::checked(output(&mut command, Duration::from_secs(120), 256 * 1024)?)?;
         Ok(())
     }
-
-    /// Gets changed files and unified diffs for a worktree in batch (sub-100ms)
-    pub fn get_worktree_diff(worktree_path: &str) -> Result<Vec<FileDiff>, String> {
-        let clean_worktree_path = Self::normalize_path(worktree_path);
-        let path_obj = Path::new(&clean_worktree_path);
-        if !path_obj.exists() || !path_obj.is_dir() {
-            return Err(format!("Worktree directory does not exist: {}", clean_worktree_path));
-        }
-
-        // 1. Get status list via git status --porcelain=v1 -u
-        let status_output = Self::git_cmd()
-            .args([
+    fn status(path: &str) -> Result<Vec<(String, String)>, String> {
+        let result = Self::checked(Self::run(
+            Self::git_cmd().args([
                 "-C",
-                &clean_worktree_path,
-                "-c",
-                "core.quotepath=false",
-                "--no-pager",
+                path,
                 "status",
                 "--porcelain=v1",
-                "-u",
-            ])
-            .output()
-            .map_err(|e| format!("Failed to spawn git status: {}", e))?;
-
-        if !status_output.status.success() {
-            let stderr = String::from_utf8_lossy(&status_output.stderr);
-            let err_msg = stderr.trim();
-            return Err(if err_msg.is_empty() {
-                format!("Git status failed with exit code {:?}", status_output.status.code())
-            } else {
-                err_msg.to_string()
-            });
+                "-z",
+                "--untracked-files=all",
+            ]),
+            2 * 1024 * 1024,
+        )?)?;
+        Ok(parse_status(&result.stdout))
+    }
+    pub fn get_worktree_diff(worktree_path: &str) -> Result<Vec<FileDiff>, String> {
+        let path = Self::directory(worktree_path)?;
+        let entries = Self::status(&path)?;
+        if entries.len() > MAX_FILES {
+            return Err(format!("{} changed files exceed the {MAX_FILES} file review limit. Use the terminal to narrow or review this change set.", entries.len()));
         }
-
-        let status_str = String::from_utf8_lossy(&status_output.stdout);
-        let mut status_entries: Vec<(String, String)> = Vec::new();
-
-        for line in status_str.lines() {
-            let trimmed = line.trim_end();
-            if trimmed.len() < 3 {
-                continue;
-            }
-            let code = trimmed[0..2].trim().to_string();
-            let mut file_path = trimmed[3..].trim().to_string();
-            // Handle renames "old -> new"
-            if let Some(idx) = file_path.find(" -> ") {
-                file_path = file_path[idx + 4..].to_string();
-            }
-            file_path = file_path.trim_matches('"').replace('\\', "/");
-            if !file_path.is_empty() {
-                status_entries.push((code, file_path));
-            }
-        }
-
-        if status_entries.is_empty() {
+        if entries.is_empty() {
             return Ok(Vec::new());
         }
-
-        // 2. Fetch diffs in a single batch command instead of spawning N processes
-        let has_head = Self::git_cmd()
-            .args(["-C", &clean_worktree_path, "rev-parse", "--verify", "HEAD"])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-
-        let mut combined_diff = String::new();
-        let mut git_diff_err: Option<String> = None;
-
+        let has_head = Self::run(
+            Self::git_cmd().args(["-C", &path, "rev-parse", "--verify", "HEAD"]),
+            64 * 1024,
+        )?
+        .status
+        .success();
+        let mut command = Self::git_cmd();
+        command.args(["-C", &path, "diff", "--no-ext-diff", "--no-textconv"]);
         if has_head {
-            let diff_output = Self::git_cmd()
-                .args([
-                    "-C",
-                    &clean_worktree_path,
-                    "-c",
-                    "core.quotepath=false",
-                    "--no-pager",
-                    "diff",
-                    "HEAD",
-                ])
-                .output();
-
-            match diff_output {
-                Ok(out) if out.status.success() => {
-                    combined_diff = String::from_utf8_lossy(&out.stdout).to_string();
-                }
-                Ok(out) => {
-                    let err = String::from_utf8_lossy(&out.stderr).to_string();
-                    if !err.trim().is_empty() {
-                        git_diff_err = Some(err.trim().to_string());
-                    }
-                }
-                Err(e) => {
-                    git_diff_err = Some(e.to_string());
-                }
-            }
-        }
-
-        // If repo has no HEAD or git diff HEAD returned empty/failed, attempt staged + unstaged diffs
-        if combined_diff.is_empty() {
-            let staged_out = Self::git_cmd()
-                .args([
-                    "-C",
-                    &clean_worktree_path,
-                    "-c",
-                    "core.quotepath=false",
-                    "--no-pager",
-                    "diff",
-                    "--cached",
-                ])
-                .output();
-
-            if let Ok(staged) = staged_out {
-                if staged.status.success() {
-                    let s = String::from_utf8_lossy(&staged.stdout);
-                    combined_diff.push_str(&s);
-                    if !combined_diff.is_empty() && !combined_diff.ends_with('\n') {
-                        combined_diff.push('\n');
-                    }
-                } else if git_diff_err.is_none() {
-                    let err = String::from_utf8_lossy(&staged.stderr).to_string();
-                    if !err.trim().is_empty() {
-                        git_diff_err = Some(err.trim().to_string());
-                    }
-                }
-            }
-
-            let unstaged_out = Self::git_cmd()
-                .args([
-                    "-C",
-                    &clean_worktree_path,
-                    "-c",
-                    "core.quotepath=false",
-                    "--no-pager",
-                    "diff",
-                ])
-                .output();
-
-            if let Ok(unstaged) = unstaged_out {
-                if unstaged.status.success() {
-                    let u = String::from_utf8_lossy(&unstaged.stdout);
-                    combined_diff.push_str(&u);
-                } else if git_diff_err.is_none() {
-                    let err = String::from_utf8_lossy(&unstaged.stderr).to_string();
-                    if !err.trim().is_empty() {
-                        git_diff_err = Some(err.trim().to_string());
-                    }
-                }
-            }
-        }
-
-        // 3. Map unified diff chunks to file paths
-        use std::collections::HashMap;
-        let mut diff_map: HashMap<String, String> = HashMap::new();
-
-        let mut current_file_path: Option<String> = None;
-        let mut current_chunk = String::new();
-
-        for line in combined_diff.lines() {
-            if line.starts_with("diff --git ") {
-                if let Some(path) = current_file_path.take() {
-                    diff_map.insert(path, std::mem::take(&mut current_chunk));
-                }
-
-                // Extract path after " b/"
-                if let Some(idx) = line.rfind(" b/") {
-                    let b_path = line[idx + 3..].trim().trim_matches('"').replace('\\', "/");
-                    current_file_path = Some(b_path);
-                }
-                current_chunk.push_str(line);
-                current_chunk.push('\n');
-            } else {
-                if line.starts_with("+++ b/") {
-                    let p = line[6..].trim().trim_matches('"').replace('\\', "/");
-                    if !p.is_empty() && p != "/dev/null" {
-                        current_file_path = Some(p);
-                    }
-                } else if line.starts_with("--- a/") && current_file_path.is_none() {
-                    let p = line[6..].trim().trim_matches('"').replace('\\', "/");
-                    if !p.is_empty() && p != "/dev/null" {
-                        current_file_path = Some(p);
-                    }
-                }
-                current_chunk.push_str(line);
-                current_chunk.push('\n');
-            }
-        }
-        if let Some(path) = current_file_path {
-            diff_map.insert(path, current_chunk);
-        }
-
-        // 4. Assemble FileDiff objects
-        let mut files = Vec::new();
-        for (status_code, file_path) in status_entries {
-            if let Some(diff_content) = diff_map.remove(&file_path) {
-                let mut additions = 0;
-                let mut deletions = 0;
-                for diff_line in diff_content.lines() {
-                    if diff_line.starts_with('+') && !diff_line.starts_with("+++") {
-                        additions += 1;
-                    } else if diff_line.starts_with('-') && !diff_line.starts_with("---") {
-                        deletions += 1;
-                    }
-                }
-                files.push(FileDiff {
-                    path: file_path,
-                    status: status_code,
-                    additions,
-                    deletions,
-                    diff_content,
-                });
-            } else if status_code.contains('?') || status_code == "A" {
-                // Untracked or staged new file without diff chunk: inspect on disk
-                let full_path = Path::new(&clean_worktree_path).join(&file_path);
-                if full_path.is_file() {
-                    let meta = std::fs::metadata(&full_path).ok();
-                    let file_size = meta.map(|m| m.len()).unwrap_or(0);
-
-                    if file_size > 1_000_000 {
-                        files.push(FileDiff {
-                            path: file_path,
-                            status: status_code,
-                            additions: 0,
-                            deletions: 0,
-                            diff_content: format!(
-                                "Untracked file size ({} KB) exceeds 1 MB preview limit.",
-                                file_size / 1024
-                            ),
-                        });
-                    } else if let Ok(bytes) = std::fs::read(&full_path) {
-                        // Check binary
-                        let is_binary = bytes.iter().take(8000).any(|&b| b == 0);
-                        if is_binary {
-                            files.push(FileDiff {
-                                path: file_path,
-                                status: status_code,
-                                additions: 0,
-                                deletions: 0,
-                                diff_content: "Binary file untracked. Diff preview not available.".to_string(),
-                            });
-                        } else {
-                            let text = String::from_utf8_lossy(&bytes);
-                            let line_count = text.lines().count();
-                            let mut virtual_diff = format!(
-                                "diff --git a/{0} b/{0}\nnew file mode 100644\n--- /dev/null\n+++ b/{0}\n@@ -0,0 +1,{1} @@\n",
-                                file_path, line_count
-                            );
-                            for l in text.lines().take(3000) {
-                                virtual_diff.push('+');
-                                virtual_diff.push_str(l);
-                                virtual_diff.push('\n');
-                            }
-                            if line_count > 3000 {
-                                virtual_diff.push_str("\n... [preview truncated after 3000 lines] ...\n");
-                            }
-                            files.push(FileDiff {
-                                path: file_path,
-                                status: status_code,
-                                additions: line_count,
-                                deletions: 0,
-                                diff_content: virtual_diff,
-                            });
-                        }
-                    } else {
-                        files.push(FileDiff {
-                            path: file_path,
-                            status: status_code,
-                            additions: 0,
-                            deletions: 0,
-                            diff_content: "Unable to read file content from disk.".to_string(),
-                        });
-                    }
-                } else {
-                    files.push(FileDiff {
-                        path: file_path,
-                        status: status_code,
-                        additions: 0,
-                        deletions: 0,
-                        diff_content: "File was deleted or not present on disk.".to_string(),
-                    });
-                }
-            } else {
-                let note = if let Some(ref err) = git_diff_err {
-                    format!("Diff preview unavailable due to Git error:\n{}\n\nFile status: {}", err, status_code)
-                } else {
-                    format!("No diff preview available or file has binary changes.\n\nFile status: {}", status_code)
-                };
-                files.push(FileDiff {
-                    path: file_path,
-                    status: status_code,
-                    additions: 0,
-                    deletions: 0,
-                    diff_content: note,
-                });
-            }
-        }
-
-        Ok(files)
-    }
-
-    /// Commits all modified files in a worktree
-    pub fn commit_worktree(worktree_path: &str, message: &str) -> Result<String, String> {
-        let clean_worktree_path = Self::normalize_path(worktree_path);
-        let path_obj = Path::new(&clean_worktree_path);
-        if !path_obj.exists() || !path_obj.is_dir() {
-            return Err(format!("Worktree directory does not exist: {}", clean_worktree_path));
-        }
-
-        let trimmed_msg = message.trim();
-        if trimmed_msg.is_empty() {
-            return Err("Commit message cannot be empty.".to_string());
-        }
-
-        let add_out = Self::git_cmd()
-            .args(["-C", &clean_worktree_path, "add", "-A"])
-            .output()
-            .map_err(|e| format!("Failed to git add: {}", e))?;
-
-        if !add_out.status.success() {
-            let stderr = String::from_utf8_lossy(&add_out.stderr);
-            return Err(format!("git add failed: {}", stderr.trim()));
-        }
-
-        let commit_out = Self::git_cmd()
-            .args(["-C", &clean_worktree_path, "commit", "-m", trimmed_msg])
-            .output()
-            .map_err(|e| format!("Failed to git commit: {}", e))?;
-
-        if !commit_out.status.success() {
-            let stderr = String::from_utf8_lossy(&commit_out.stderr);
-            return Err(format!("git commit failed: {}", stderr.trim()));
-        }
-
-        Ok(String::from_utf8_lossy(&commit_out.stdout).to_string())
-    }
-
-    fn get_dirty_file_count(path: &str) -> usize {
-        let clean_path = Self::normalize_path(path);
-        if !Path::new(&clean_path).is_dir() {
-            return 0;
-        }
-        let output = Self::git_cmd()
-            .args(["-C", &clean_path, "status", "--porcelain"])
-            .output()
-            .ok();
-
-        if let Some(out) = output {
-            String::from_utf8_lossy(&out.stdout).lines().count()
+            command.arg("HEAD");
         } else {
-            0
+            command.arg("--cached");
+        }
+        command.arg("--");
+        // A giant patch never grows process memory or an IPC payload without a bound.
+        let patch = Self::run(&mut command, MAX_DIFF).and_then(Self::checked);
+        let (mut patches, preview_error) = match patch {
+            Ok(result) => (split_patch(&String::from_utf8_lossy(&result.stdout)), None),
+            Err(error) => (HashMap::new(), Some(error)),
+        };
+        let mut budget = TOTAL_PREVIEW;
+        let mut diffs = Vec::with_capacity(entries.len());
+        for (status, file) in entries {
+            let mut additions = 0;
+            let mut deletions = 0;
+            let text = if let Some(patch) = patches.remove(&file) {
+                additions = patch
+                    .lines()
+                    .filter(|line| line.starts_with('+') && !line.starts_with("+++"))
+                    .count();
+                deletions = patch
+                    .lines()
+                    .filter(|line| line.starts_with('-') && !line.starts_with("---"))
+                    .count();
+                patch
+            } else if status.contains('?') || (!has_head && status.contains('A')) {
+                let full_path = Path::new(&path).join(&file);
+                let metadata = std::fs::symlink_metadata(&full_path)
+                    .map_err(|error| format!("Cannot inspect {file}: {error}"))?;
+                if metadata.file_type().is_symlink() {
+                    "Symbolic link. Inspect its target in the terminal.".into()
+                } else if metadata.len() > 1_000_000 || budget == 0 {
+                    "Preview omitted: file exceeds the review size limit. Inspect it in the terminal before committing.".into()
+                } else {
+                    // take() also bounds reads if another process grows the file after metadata().
+                    use std::io::Read;
+                    let mut bytes = Vec::new();
+                    std::fs::File::open(&full_path)
+                        .and_then(|file| file.take(1_000_001).read_to_end(&mut bytes))
+                        .map_err(|error| format!("Cannot read {file}: {error}"))?;
+                    if bytes.contains(&0) {
+                        "Binary file. No text preview available.".into()
+                    } else {
+                        let content = String::from_utf8_lossy(&bytes);
+                        additions = content.lines().count();
+                        let mut preview = String::new();
+                        for line in content.lines().take(2000) {
+                            preview.push('+');
+                            preview.push_str(line);
+                            preview.push('\n');
+                        }
+                        preview
+                    }
+                }
+            } else {
+                format!(
+                    "No text preview available (binary, rename, or concurrent change). {}",
+                    preview_error
+                        .as_deref()
+                        .unwrap_or("Refresh if the file changed during inspection.")
+                )
+            };
+            let preview = truncate_preview(&text, FILE_PREVIEW.min(budget));
+            budget = budget.saturating_sub(preview.len());
+            diffs.push(FileDiff {
+                path: file,
+                status,
+                additions,
+                deletions,
+                diff_content: preview,
+            });
+        }
+        Ok(diffs)
+    }
+    pub fn commit_worktree(worktree_path: &str, message: &str) -> Result<String, String> {
+        let path = Self::directory(worktree_path)?;
+        let _operation = Mutation::begin(&path)?;
+        let message = message.trim();
+        if message.is_empty() || message.len() > 16 * 1024 || message.contains('\0') {
+            return Err(
+                "Enter a commit message between 1 and 16,384 bytes, without NUL characters.".into(),
+            );
+        }
+        Self::checked(Self::run(
+            Self::git_cmd().args(["-C", &path, "add", "-A", "--"]),
+            256 * 1024,
+        )?)?;
+        let result = output(Self::git_cmd().args(["-C", &path, "commit", "-m", message]), Duration::from_secs(120), 256 * 1024)
+            .and_then(Self::checked).map_err(|error| format!("{error}\nChanges staged by git add -A remain staged. Check git status before retrying."))?;
+        Ok(String::from_utf8_lossy(&result.stdout).trim().to_string())
+    }
+}
+
+fn parse_status(bytes: &[u8]) -> Vec<(String, String)> {
+    let mut fields = bytes.split(|byte| *byte == 0);
+    let mut entries = Vec::new();
+    while let Some(field) = fields.next() {
+        if field.len() < 4 {
+            continue;
+        }
+        let status = String::from_utf8_lossy(&field[..2]).trim().to_string();
+        let path = String::from_utf8_lossy(&field[3..]).into_owned();
+        if field[..2].contains(&b'R') || field[..2].contains(&b'C') {
+            fields.next();
+        }
+        entries.push((status, path));
+    }
+    entries
+}
+
+fn unquote_path(path: &str) -> String {
+    if !path.starts_with('"') {
+        return path.to_string();
+    }
+    let mut decoded = Vec::new();
+    let mut bytes = path.trim_matches('"').bytes().peekable();
+    while let Some(byte) = bytes.next() {
+        if byte != b'\\' {
+            decoded.push(byte);
+            continue;
+        }
+        match bytes.next() {
+            Some(b't') => decoded.push(b'\t'),
+            Some(b'n') => decoded.push(b'\n'),
+            Some(b'r') => decoded.push(b'\r'),
+            Some(first @ b'0'..=b'7') => {
+                let mut value = (first - b'0') as u16;
+                for _ in 0..2 {
+                    if bytes.peek().is_some_and(|byte| matches!(byte, b'0'..=b'7')) {
+                        value = value * 8 + (bytes.next().unwrap_or(b'0') - b'0') as u16;
+                    }
+                }
+                decoded.push(value as u8);
+            }
+            Some(byte) => decoded.push(byte),
+            None => (),
         }
     }
+    String::from_utf8_lossy(&decoded).into_owned()
+}
+
+fn split_patch(patch: &str) -> HashMap<String, String> {
+    let mut patches = HashMap::new();
+    for chunk in patch
+        .strip_prefix("diff --git ")
+        .unwrap_or(patch)
+        .split("\ndiff --git ")
+    {
+        let new_path = chunk
+            .lines()
+            .find_map(|line| line.strip_prefix("+++ "))
+            .map(unquote_path);
+        let old_path = chunk
+            .lines()
+            .find_map(|line| line.strip_prefix("--- "))
+            .map(unquote_path);
+        let path = new_path.filter(|path| path != "/dev/null").or(old_path);
+        if let Some(path) = path {
+            patches.insert(
+                path.strip_prefix("b/")
+                    .or_else(|| path.strip_prefix("a/"))
+                    .unwrap_or(&path)
+                    .to_string(),
+                format!("diff --git {chunk}"),
+            );
+        }
+    }
+    patches
+}
+
+fn truncate_preview(text: &str, limit: usize) -> String {
+    if text.len() <= limit {
+        return text.to_string();
+    }
+    if limit == 0 {
+        return "Preview omitted: total review size limit reached. Inspect this file in the terminal.".into();
+    }
+    let mut end = limit;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!(
+        "{}\n[Preview truncated. Inspect the full change in the terminal before committing.]",
+        &text[..end]
+    )
 }
 
 #[cfg(test)]
 mod tests {
-    use super::GitManager;
-
+    use super::*;
     #[test]
     fn normalizes_windows_and_msys_paths_for_ipc() {
-        assert_eq!(GitManager::normalize_path(r"C:\repo\worktree\"), "C:/repo/worktree");
-        assert_eq!(GitManager::normalize_path("/c/repo/worktree/"), "C:/repo/worktree");
+        assert_eq!(
+            GitManager::normalize_path(r"C:\repo\worktree\"),
+            "C:/repo/worktree"
+        );
+        assert_eq!(
+            GitManager::normalize_path("/c/repo/worktree/"),
+            "C:/repo/worktree"
+        );
+        assert_eq!(GitManager::normalize_path("/é/repo"), "/é/repo");
     }
-
     #[test]
     fn worktree_ids_are_stable_and_case_insensitive() {
         assert_eq!(
             GitManager::generate_worktree_id("C:/Repo/Worktree"),
             GitManager::generate_worktree_id("c:\\repo\\worktree")
         );
+    }
+    #[test]
+    fn nul_status_preserves_names_and_rename_destination() {
+        let entries =
+            parse_status(b"R  new -> name.txt\0old.txt\0?? leading space.txt\0 M a\tb.txt\0");
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].1, "new -> name.txt");
+        assert_eq!(entries[2].1, "a\tb.txt");
+    }
+    #[test]
+    fn preview_limits_are_unicode_safe() {
+        assert!(truncate_preview("日本語".repeat(20).as_str(), 5).starts_with('日'));
+        assert_eq!(unquote_path(r#""b/a\tb.txt""#), "b/a\tb.txt");
+    }
+    #[test]
+    fn patch_content_cannot_be_mistaken_for_a_file_header() {
+        let chunks = split_patch("diff --git a/test.txt b/test.txt\n--- a/test.txt\n+++ b/test.txt\n@@ -1 +1 @@\n-old\n+contains diff --git text\n");
+        assert!(chunks["test.txt"].contains("+contains diff --git text"));
+    }
+    #[test]
+    fn mutation_guard_rejects_duplicate_writes() {
+        let guard = Mutation::begin("C:/unique-test-repo").unwrap();
+        assert!(Mutation::begin("c:/unique-test-repo").is_err());
+        drop(guard);
+        assert!(Mutation::begin("c:/unique-test-repo").is_ok());
+    }
+
+    #[test]
+    fn real_git_worktree_diff_commit_remove_lifecycle() {
+        // All writes/removals are restricted to this test's unique temporary directory.
+        struct Scratch(std::path::PathBuf);
+        impl Drop for Scratch {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let root = std::env::var_os("LOCALAPPDATA")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir)
+            .join("Temp/opencode")
+            .join(format!("vela-git-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("repo")).unwrap();
+        let scratch = Scratch(root);
+        let path = scratch.0.join("repo").to_string_lossy().replace('\\', "/");
+        let run = |args: &[&str]| {
+            GitManager::checked(
+                GitManager::run(
+                    GitManager::git_cmd().arg("-C").arg(&path).args(args),
+                    256 * 1024,
+                )
+                .unwrap(),
+            )
+            .unwrap()
+        };
+        run(&["init", "-b", "main"]);
+        run(&["config", "user.name", "Vela Test"]);
+        run(&["config", "user.email", "vela-test@example.invalid"]);
+        run(&["config", "commit.gpgsign", "false"]);
+        run(&["config", "core.autocrlf", "false"]);
+        let hooks = scratch.0.join("hooks");
+        std::fs::create_dir(&hooks).unwrap();
+        run(&["config", "core.hooksPath", &hooks.to_string_lossy()]);
+        std::fs::write(scratch.0.join("repo/first.txt"), "original\n").unwrap();
+        GitManager::commit_worktree(&path, "initial").unwrap();
+        let worktree = GitManager::create_worktree(&path, "feat/test", None).unwrap();
+        assert_eq!(GitManager::list_worktrees(&path).unwrap().len(), 2);
+        std::fs::write(Path::new(&worktree.path).join("first.txt"), "updated\n").unwrap();
+        std::fs::write(
+            Path::new(&worktree.path).join("日本 file.txt"),
+            "new content\n",
+        )
+        .unwrap();
+        let changes = GitManager::get_worktree_diff(&worktree.path).unwrap();
+        assert_eq!(changes.len(), 2);
+        assert!(changes
+            .iter()
+            .any(|file| file.path == "first.txt" && file.additions > 0 && file.deletions > 0));
+        assert!(changes
+            .iter()
+            .any(|file| file.path == "日本 file.txt" && file.additions == 1));
+        assert!(GitManager::remove_worktree(&path, &worktree.path, false).is_err());
+        GitManager::commit_worktree(&worktree.path, "reviewed task").unwrap();
+        assert!(GitManager::get_worktree_diff(&worktree.path)
+            .unwrap()
+            .is_empty());
+        assert!(GitManager::get_worktree_diff(&path).unwrap().is_empty());
+        GitManager::remove_worktree(&path, &worktree.path, false).unwrap();
+        assert_eq!(GitManager::list_worktrees(&path).unwrap().len(), 1);
+        assert!(GitManager::create_worktree(&path, "--invalid", None).is_err());
+        assert!(GitManager::remove_worktree(&path, &path, false).is_err());
     }
 }

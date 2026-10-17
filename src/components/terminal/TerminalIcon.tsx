@@ -1,11 +1,12 @@
 import React from 'react';
 import { Terminal, Bot } from 'lucide-react';
+import { AgentType } from '../../types';
 
 export interface TerminalIconProps {
   shell?: string;
   title?: string;
   isAgent?: boolean;
-  agentType?: string | null;
+  agentType?: AgentType | null;
   className?: string;
 }
 
@@ -144,10 +145,10 @@ export function detectTerminalType(params: {
   shell?: string;
   title?: string;
   isAgent?: boolean;
-  agentType?: string | null;
+  agentType?: AgentType | null;
 }): 'git-bash' | 'powershell' | 'cmd' | 'wsl' | 'claude' | 'gemini' | 'aider' | 'agent' | 'terminal' {
   const isAgent = params.isAgent;
-  const agentType = params.agentType?.toLowerCase() || '';
+  const agentType = typeof params.agentType === 'string' ? params.agentType.toLowerCase() : params.agentType?.custom.toLowerCase() || '';
   const shell = params.shell?.toLowerCase() || '';
   const title = params.title?.toLowerCase() || '';
 

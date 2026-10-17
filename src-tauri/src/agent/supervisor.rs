@@ -113,7 +113,7 @@ impl AgentSupervisor {
                 id: "agent-claude".to_string(),
                 name: "Claude Code".to_string(),
                 executable: "claude".to_string(),
-                args: vec!["--dangerously-skip-permissions".to_string()],
+                args: vec![],
                 is_agent: true,
                 agent_type: Some(AgentType::ClaudeCode),
             });
@@ -141,13 +141,34 @@ impl AgentSupervisor {
             });
         }
 
+        for (id, name, executable, agent_type) in [
+            ("agent-codex", "Codex CLI", "codex", AgentType::Codex),
+            (
+                "agent-opencode",
+                "OpenCode",
+                "opencode",
+                AgentType::OpenCode,
+            ),
+        ] {
+            if Self::check_binary_exists(executable) {
+                profiles.push(ShellProfile {
+                    id: id.into(),
+                    name: name.into(),
+                    executable: executable.into(),
+                    args: vec![],
+                    is_agent: true,
+                    agent_type: Some(agent_type),
+                });
+            }
+        }
         profiles
     }
 
     /// Pure in-process binary lookup via PATH without spawning where.exe/cmd.exe
     pub fn check_binary_exists(bin: &str) -> bool {
         if let Ok(path_var) = std::env::var("PATH") {
-            let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".EXE;.CMD;.BAT;.COM".to_string());
+            let pathext =
+                std::env::var("PATHEXT").unwrap_or_else(|_| ".EXE;.CMD;.BAT;.COM".to_string());
             let exts: Vec<String> = pathext.split(';').map(|s| s.to_lowercase()).collect();
 
             for dir in std::env::split_paths(&path_var) {
@@ -171,7 +192,12 @@ impl AgentSupervisor {
         #[cfg(windows)]
         cmd.creation_flags(CREATE_NO_WINDOW);
 
-        let output = cmd.arg("--version").output().ok()?;
+        let output = crate::process::output(
+            cmd.arg("--version"),
+            std::time::Duration::from_secs(5),
+            64 * 1024,
+        )
+        .ok()?;
         if output.status.success() {
             let str_val = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if !str_val.is_empty() {

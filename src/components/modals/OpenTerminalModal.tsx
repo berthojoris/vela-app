@@ -13,6 +13,8 @@ import { TerminalIcon } from '../terminal/TerminalIcon';
 import { useTerminalStore } from '../../stores/useTerminalStore';
 import { useWorktreeStore } from '../../stores/useWorktreeStore';
 import { tauriIpc } from '../../lib/tauriIpc';
+import { errorMessage } from '../../lib/errors';
+import { useDialog } from '../../lib/useDialog';
 
 interface OpenTerminalModalProps {
   isOpen: boolean;
@@ -33,6 +35,7 @@ export const OpenTerminalModal: React.FC<OpenTerminalModalProps> = ({
     setSplitMode,
     sessions,
     defaultProfileId,
+    fetchProfiles,
   } = useTerminalStore();
 
   const { repoPath, worktrees, activeWorktreeId } = useWorktreeStore();
@@ -42,6 +45,11 @@ export const OpenTerminalModal: React.FC<OpenTerminalModalProps> = ({
   const [selectedProfileId, setSelectedProfileId] = useState('pwsh');
   const [openInSplit, setOpenInSplit] = useState(false);
   const [isBrowsing, setIsBrowsing] = useState(false);
+  const [isLaunching, setIsLaunching] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const launchingRef = useRef(false);
+  const launchedRef = useRef(false);
+  const dialogRef = useDialog(isOpen, onClose, isLaunching || isBrowsing, () => !launchedRef.current);
   const inputRef = useRef<HTMLInputElement>(null);
   const wasOpenRef = useRef(false);
 
@@ -54,6 +62,9 @@ export const OpenTerminalModal: React.FC<OpenTerminalModalProps> = ({
         repoPath ||
         '';
       setTargetDir(defaultDir);
+      launchedRef.current = false;
+      setError(null);
+      setOpenInSplit(false);
 
       if (initialProfileId) {
         setSelectedProfileId(initialProfileId);
@@ -63,10 +74,6 @@ export const OpenTerminalModal: React.FC<OpenTerminalModalProps> = ({
         setSelectedProfileId(profiles[0].id);
       }
 
-      setTimeout(() => {
-        inputRef.current?.focus();
-        inputRef.current?.select();
-      }, 50);
     }
     wasOpenRef.current = isOpen;
   }, [isOpen, initialDirectory, initialProfileId]);
@@ -85,7 +92,7 @@ export const OpenTerminalModal: React.FC<OpenTerminalModalProps> = ({
         setTargetDir(selected);
       }
     } catch (err) {
-      console.error('Failed to open directory dialog', err);
+      setError(errorMessage(err, 'Unable to open the folder picker. Type the directory path instead.'));
     } finally {
       setIsBrowsing(false);
     }
@@ -93,10 +100,17 @@ export const OpenTerminalModal: React.FC<OpenTerminalModalProps> = ({
 
   const handleLaunch = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
+    if (launchingRef.current || isBrowsing) return;
+    launchingRef.current = true;
+    setIsLaunching(true);
+    setError(null);
+    try {
     const finalDir = targetDir.trim();
 
     const profile =
-      profiles.find((p) => p.id === selectedProfileId) || profiles[0];
+      profiles.find((p) => p.id === selectedProfileId);
+    if (!profile) throw new Error('Select an available shell or agent. If it is missing, install it and reload profiles.');
+    const previousActive = useTerminalStore.getState().activeSessionId;
 
     // Determine tab title
     let title = profile?.name || 'Terminal';
@@ -116,21 +130,29 @@ export const OpenTerminalModal: React.FC<OpenTerminalModalProps> = ({
       if (wt) matchedWorktreeId = wt.id;
     }
 
-    const newSession = await createSession({
+    await createSession({
       shell: profile?.executable,
       args: profile?.args,
       title,
       cwd: finalDir,
       worktreeId: matchedWorktreeId,
       isAgent: profile?.is_agent,
-      agentType: profile?.agent_type as any,
+      agentType: profile.agent_type,
     });
 
     if (openInSplit && sessions.length > 0) {
       setSplitMode('vertical');
+      if (previousActive) useTerminalStore.getState().setSecondarySession(previousActive);
     }
 
+    launchedRef.current = true;
     onClose();
+    } catch (error) {
+      setError(errorMessage(error, 'Unable to launch terminal. Check the executable and directory, then try again.'));
+    } finally {
+      launchingRef.current = false;
+      setIsLaunching(false);
+    }
   };
 
   const selectedProfile = profiles.find((p) => p.id === selectedProfileId);
@@ -138,10 +160,15 @@ export const OpenTerminalModal: React.FC<OpenTerminalModalProps> = ({
   return (
     <div
       className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 select-none text-xs"
-      onClick={onClose}
+      onClick={() => { if (!isLaunching && !isBrowsing) onClose(); }}
     >
       <div
-        className="w-full max-w-lg bg-orca-darker border border-orca-border rounded-xl shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="open-terminal-title"
+        aria-busy={isLaunching}
+        className="w-full max-w-lg max-h-[90vh] overflow-y-auto bg-orca-darker border border-orca-border rounded-xl flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Modal Header */}
@@ -150,12 +177,14 @@ export const OpenTerminalModal: React.FC<OpenTerminalModalProps> = ({
             <div className="w-5 h-5 rounded bg-orca-accent/20 border border-orca-accent/40 flex items-center justify-center text-orca-accent">
               <Terminal className="w-3.5 h-3.5" />
             </div>
-            <h3 className="font-semibold text-white text-sm">
+            <h3 id="open-terminal-title" className="font-semibold text-white text-sm">
               Open Terminal in Directory
             </h3>
           </div>
           <button
             onClick={onClose}
+            disabled={isLaunching || isBrowsing}
+            aria-label="Close terminal dialog"
             className="w-7 h-7 rounded hover:bg-orca-hover text-orca-muted hover:text-white flex items-center justify-center transition-colors"
           >
             <X className="w-4 h-4" />
@@ -164,6 +193,8 @@ export const OpenTerminalModal: React.FC<OpenTerminalModalProps> = ({
 
         {/* Modal Body */}
         <form onSubmit={handleLaunch} className="p-4 space-y-4">
+          {error && <p role="alert" className="p-3 border border-orca-rose/40 rounded-md text-sm text-orca-text whitespace-pre-wrap break-words select-text">{error}</p>}
+          <fieldset disabled={isLaunching || isBrowsing} className="space-y-4 min-w-0">
           {/* 1. Target Directory Input with Native Browse */}
           <div>
             <div className="flex items-center justify-between mb-1.5">
@@ -179,6 +210,7 @@ export const OpenTerminalModal: React.FC<OpenTerminalModalProps> = ({
             <div className="flex items-center gap-1.5">
               <input
                 ref={inputRef}
+                aria-label="Working directory path"
                 type="text"
                 placeholder="C:/path/to/project or leave empty for default"
                 value={targetDir}
@@ -230,7 +262,7 @@ export const OpenTerminalModal: React.FC<OpenTerminalModalProps> = ({
                       shell={p.executable}
                       title={p.name}
                       isAgent={p.is_agent}
-                      agentType={p.agent_type as any}
+                      agentType={p.agent_type}
                       className="w-3.5 h-3.5"
                     />
                     <span>{p.name}</span>
@@ -238,6 +270,7 @@ export const OpenTerminalModal: React.FC<OpenTerminalModalProps> = ({
                 );
               })}
             </div>
+            <button type="button" onClick={() => { void fetchProfiles(); }} className="mt-2 underline text-orca-muted hover:text-white">Reload profiles</button>
           </div>
 
           {/* 3. Split Screen Option */}
@@ -257,22 +290,26 @@ export const OpenTerminalModal: React.FC<OpenTerminalModalProps> = ({
               </label>
             </div>
           )}
+          </fieldset>
 
           {/* Footer Actions */}
           <div className="pt-2 border-t border-orca-border flex items-center justify-end gap-2">
             <button
               type="button"
               onClick={onClose}
+              disabled={isLaunching || isBrowsing}
               className="h-8 px-3 rounded-md hover:bg-orca-hover text-orca-muted hover:text-white transition-colors"
             >
               Cancel (Esc)
             </button>
             <button
               type="submit"
+              disabled={isLaunching || isBrowsing || !selectedProfile}
+              aria-busy={isLaunching}
               className="h-8 px-4 rounded-md bg-orca-accent hover:bg-orca-accentHover text-white font-medium flex items-center gap-1.5 transition-colors shadow-sm"
             >
               <Check className="w-3.5 h-3.5" />
-              <span>Launch Terminal</span>
+              <span>{isLaunching ? 'Launching…' : 'Launch Terminal'}</span>
             </button>
           </div>
         </form>

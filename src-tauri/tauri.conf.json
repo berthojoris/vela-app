@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "Vela",
         "width": 1280,
         "height": 820,
@@ -19,7 +20,12 @@
         "minHeight": 550,
         "decorations": false,
         "transparent": false,
-        "center": true
+        "maximized": true,
+        "center": true,
+        "visible": false,
+        "backgroundColor": "#030306",
+        "theme": "Dark",
+        "shadow": false
       }
     ],
     "security": {

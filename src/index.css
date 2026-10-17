@@ -1,6 +1,5 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+@config "../tailwind.config.js";
 
 @layer base {
   * {
@@ -14,6 +13,19 @@
     user-select: none;
     -webkit-user-select: none;
   }
+  :focus-visible {
+    outline: 2px solid #3b82f6;
+    outline-offset: 2px;
+  }
+  input, textarea { caret-color: #3b82f6; }
+  ::selection { background: #1e3a5f; color: #ffffff; }
+}
+
+/* Flat UI also covers legacy Tailwind utility classes. */
+*, *::before, *::after { box-shadow: none !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
 }
 
 /* Custom Scrollbars */

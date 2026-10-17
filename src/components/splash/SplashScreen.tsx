@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import velaLogo from '../../assets/vela_logo.png';
+import velaLogo from '../../assets/vela_logo.webp';
 
 interface SplashScreenProps {
   onComplete: () => void;
@@ -193,7 +193,7 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onComplete }) => {
   return (
     <div
       onClick={handleQuickSkip}
-      className={`fixed inset-0 z-[9999] flex flex-col items-center justify-center select-none cursor-pointer transition-all duration-700 ease-out ${
+      className={`fixed inset-0 z-[9999] flex flex-col items-center justify-center select-none cursor-pointer bg-[#030306] transition-all duration-700 ease-out ${
         isFadingOut ? 'opacity-0 scale-105 pointer-events-none' : 'opacity-100 scale-100'
       }`}
     >

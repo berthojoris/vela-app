@@ -2,35 +2,31 @@ import React, { useState, useEffect } from 'react';
 import { Minus, X, GitBranch, FolderGit2 } from 'lucide-react';
 import { tauriIpc } from '../../lib/tauriIpc';
 import { useWorktreeStore } from '../../stores/useWorktreeStore';
-import velaLogo from '../../assets/vela_logo.png';
+import velaLogo from '../../assets/vela_logo.webp';
+import { useNoticeStore } from '../../stores/useNoticeStore';
 
 export const TitleBar: React.FC = () => {
   const [isMaximized, setIsMaximized] = useState(false);
 
   useEffect(() => {
-    // Initial check
-    tauriIpc.isWindowMaximized().then(setIsMaximized);
-
-    // Periodic check to capture Win+Up, Win+Down, or Snap layout changes
-    const interval = setInterval(async () => {
-      const max = await tauriIpc.isWindowMaximized();
-      setIsMaximized(max);
-    }, 400);
-
-    return () => clearInterval(interval);
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    const update = () => { void tauriIpc.isWindowMaximized().then((value) => { if (!disposed) setIsMaximized(value); }).catch((error) => { if (!disposed) useNoticeStore.getState().report('Unable to read window state', error); }); };
+    update();
+    void tauriIpc.onWindowResized(update).then((cleanup) => { if (disposed) cleanup(); else unlisten = cleanup; }).catch((error) => { if (!disposed) useNoticeStore.getState().report('Unable to watch window state', error); });
+    return () => { disposed = true; unlisten?.(); };
   }, []);
 
   const handleMinimize = async () => {
-    await tauriIpc.minimizeWindow();
+    try { await tauriIpc.minimizeWindow(); } catch (error) { useNoticeStore.getState().report('Unable to minimize window', error); }
   };
 
   const handleToggleMaximize = async () => {
-    const newState = await tauriIpc.toggleMaximize();
-    setIsMaximized(newState);
+    try { setIsMaximized(await tauriIpc.toggleMaximize()); } catch (error) { useNoticeStore.getState().report('Unable to resize window', error); }
   };
 
   const handleClose = async () => {
-    await tauriIpc.closeWindow();
+    try { await tauriIpc.closeWindow(); } catch (error) { useNoticeStore.getState().report('Unable to close window', error); }
   };
 
   const { repoPath, worktrees, activeWorktreeId, activeSessionCwd } = useWorktreeStore();
@@ -49,7 +45,7 @@ export const TitleBar: React.FC = () => {
           <img
             src={velaLogo}
             alt="Vela"
-            className="w-5 h-5 object-contain drop-shadow-[0_0_8px_rgba(56,189,248,0.6)]"
+            className="w-5 h-5 object-contain"
           />
           <span className="tracking-tight font-bold text-white text-[13px]">Vela</span>
           <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-orca-card border border-orca-border text-orca-muted">
@@ -83,7 +79,6 @@ export const TitleBar: React.FC = () => {
       {/* Middle: Drag Region Filler */}
       <div
         data-tauri-drag-region
-        onDoubleClick={handleToggleMaximize}
         className="flex-1 h-full mx-4 cursor-default"
       />
 

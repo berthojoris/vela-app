@@ -1,86 +1,87 @@
-# Vela 🌌
+# Vela
 
-> **"Engineered with pulsar-class speed. The ultra-lightweight Agent Development Environment."**  
-> *Inspired by the Vela Pulsar—one of the fastest rotating neutron stars in the galaxy, spinning over 11 times per second—Vela delivers hyper-responsive terminal multiplexing, native Windows ConPTY streaming, and isolated Git Worktrees for parallel AI coding agents with a near-zero memory footprint.*
+A Windows desktop terminal and Git worktree manager built with Rust, Tauri 2, React 19, and TypeScript.
 
----
+## Features
 
-## ⚡ Overview & Vision
+- Native ConPTY terminals with persistent tab buffers and optional WebGL rendering.
+- PowerShell, CMD, Git Bash, WSL, and installed coding agent profiles.
+- Single pane, vertical split, and horizontal split with independent keyboard focus.
+- Git worktree creation/removal, bounded unified diff previews, and commit of all changes.
+- Inline errors, retryable launch forms, isolated terminal render failures, and local diagnostics.
+- Safe agent defaults: no automatic bypass of agent permission checks.
 
-**Vela** is an ultra-lightweight, high-performance desktop environment built with **Rust + Tauri 2.x + React 19 + TypeScript + Tailwind CSS**. It eliminates the massive memory overhead of Electron-based IDEs, allowing software engineers to orchestrate multiple AI coding agents (**Claude Code**, **Gemini CLI**, **Aider**, **Codex**, etc.) simultaneously across **isolated Git Worktrees**.
+Vela launches CLI agents; it does **not** currently parse their task status, provide a security sandbox, or implement the Android Remote Companion. The PRDs describe future goals, not a list of shipped features.
 
-### Key Performance Benchmarks vs Electron
-* **Idle Memory**: `< 65 MB` RAM (vs ~600MB–1.5GB in Electron)
-* **Active Memory (5 tabs/agents)**: `< 140 MB` RAM
-* **Cold Start**: `< 350 ms`
-* **Zero Bloat**: Native Windows ConPTY (`portable-pty`) and native Windows WebView2 runtime.
+## Requirements
 
----
+- Windows 10/11 x64 with Microsoft Edge WebView2 Runtime.
+- Git 2.40+ available in PATH.
+- Installed shells/agents you intend to launch.
+- For development: Node.js 22.12+ or 24 LTS, stable Rust, and Visual Studio C++ build tools / Windows SDK.
 
-## ✨ Features
-
-1. **Pulsar-Fast Tab & Directory Navigation**
-   * Instant `+` tab button and **`Ctrl + T`** shortcut with a sleek **"Open in Directory"** modal.
-   * Preset 1-click jump to **Active Worktree**, **Repo Root**, or **Recent Folders**.
-   * Native Windows folder picker integration ("Browse...").
-   * **`Ctrl + W`** to close active tab.
-   * Double-click on any tab header to rename.
-   * Layout splits: Single Pane, **Vertical Split** (`Columns2`), and **Horizontal Split** (`Rows2`).
-   * Quick shell profiles: PowerShell 7, Windows PowerShell, CMD, Git Bash, WSL.
-
-2. **Git Worktree-First Isolation**
-   * Run multiple coding agents simultaneously on different branches without file conflicts or dirty working tree collisions.
-   * One-click worktree creation with automated task branching.
-   * Option to automatically launch an AI agent (e.g. `claude`) inside the new worktree immediately upon creation.
-   * Real-time modified/dirty file counter per worktree.
-
-3. **Visual Diff & Review Engine**
-   * Inspect file changes with unified syntax-highlighted diffs (`+` additions in emerald, `-` deletions in rose).
-   * Direct commit input to commit changes to the worktree branch without leaving the app.
-
-4. **ConPTY Native Streaming**
-   * Windows Pseudo Console (`CreatePseudoConsole`) managed by Rust background worker threads.
-   * Streaming raw terminal bytes directly to `@xterm/xterm` with **GPU WebGL acceleration (60 FPS)**.
-
-5. **Modern Flat UI Design**
-   * Universal Zero-Shadow policy with 1px crisp borders.
-   * Frameless custom titlebar with seamless Windows drag region, window controls, and dynamic Maximize/Restore Down icon.
-   * High-contrast cosmic dark theme (`#09090b` / `#141418`).
-
----
-
-## 🚀 Getting Started
-
-### Prerequisites
-* Windows 10 or Windows 11 (64-bit)
-* [Rust](https://rustup.rs/) (1.80+)
-* [Node.js](https://nodejs.org/) (v18+)
-
-### Running in Development Mode
 ```powershell
+npm ci
 npm run tauri dev
 ```
 
-### Building Standalone Release Executable
+`npm run dev` is a browser-only UI preview with mocked terminal and Git operations. It does not validate native PTY/Git behaviour.
+
+## Checks and release build
+
 ```powershell
+npm test
+npm run test:ui
+npm run build
+cd src-tauri
+cargo check --locked
+cargo test --locked --lib
+cd ..
 npx @tauri-apps/cli build --no-bundle
 ```
-The compiled binary will be located at:
-`src-tauri/target/release/Vela.exe` (or `vela.exe`)
 
----
+Release executable: `src-tauri/target/release/vela.exe`. Bundling is disabled; this command does not create an installer. Close a running release copy before rebuilding it.
 
-## ⌨️ Keyboard Shortcuts
+The Windows CI workflow runs frontend tests/build, Rust checks/tests, and the release build. Rust tests include real temporary Git worktree/diff/commit/remove operations and real Windows ConPTY input/output, natural exit, and shutdown. Frontend tests cover stale requests, duplicate submissions, launch retry, split focus, output acknowledgements, input limits, and directory metadata.
+
+`npm run test:ui` uses an installed Microsoft Edge in an isolated headless profile. It checks the browser-preview workspace at 1280×820 and 800×550, including real xterm layout, split focus, modal shortcuts, and recoverable errors. This does not replace interactive testing in the native WebView2 window. The test runner starts/stops its own Vite server; port 1420 must be free.
+
+## Safety and recovery
+
+- A worktree separates Git files, **not** filesystem permissions. Agents run with your user privileges and their normal permission prompts.
+- Commit includes every tracked and unignored untracked change via `git add -A`. There is no file selection or automatic push.
+- Failed commits may leave changes staged. Timed-out write operations must be checked with `git status` / `git log` before retrying. Vela never automatically retries a Git write.
+- The diff modal keeps its target fixed during a commit. A refresh failure after a successful commit is reported separately.
+- Worktree removal requires confirmation, refuses active terminal directories in the UI, and lets Git protect dirty worktrees. The main worktree cannot be removed.
+- App close is blocked while an in-process Git write is running. On exit, Vela terminates its terminal process trees; it does not terminate external terminals.
+- A failed terminal can be closed without losing the rest of the workspace. Session restoration across app restarts is not implemented.
+
+Local diagnostics: `%LOCALAPPDATA%/Vela/logs/errors.log`, rotated at roughly 256 KiB with one previous file. Logs contain error details and may contain paths; terminal streams are not logged and diagnostics are not uploaded.
+
+## Resource bounds and performance
+
+- Maximum 32 terminal tabs; each has 5,000 lines of scrollback.
+- PTY output remains Tauri events, with a 64 KiB unacknowledged byte window per session. Credits return only after xterm consumes the output. A stalled renderer is stopped after a 60 second deadline.
+- Ordered input is chunked without splitting Unicode surrogate pairs. Pastes above 262,144 UTF-16 code units are refused rather than queued indefinitely.
+- Git command output and execution duration are bounded. Most reads time out at 30 seconds; writes at 120 seconds; agent version probes at 5 seconds.
+- Review supports up to 500 changed files. Batch patches are capped at 8 MiB, per-file previews at about 32 KiB, and total text previews at about 2 MiB plus explanatory notices. Truncated/unavailable previews must be inspected in a terminal before committing.
+- The terminal and GPU renderer load separately from the initial app shell. Startup no longer waits for a decorative splash.
+
+RAM, cold-start, and FPS numbers in earlier PRDs are **targets, not verified benchmarks**. Production acceptance still requires interactive WebView2/agent testing and sustained-load profiling on the deployment machines.
+
+## Directory tracking
+
+PowerShell, CMD, and standard Git Bash profiles report prompt directories through OSC 7; the active repository follows supported directory changes. PowerShell preserves the original prompt. Custom prompt scripts can override shell integration. Unmapped Linux paths from WSL/custom shells cannot be interpreted as Windows Git paths; those sessions retain their launch context until a compatible directory report is available.
+
+## Shortcuts
 
 | Shortcut | Action |
-| :--- | :--- |
-| `Ctrl + T` | Open New Terminal in Directory Modal |
-| `Enter` in Modal | Launch Terminal immediately in target folder |
-| `Ctrl + W` | Close active terminal tab |
-| `Double Click Tab` | Rename tab title inline |
-| `Double Click Titlebar` | Toggle Maximize / Restore Down |
+| --- | --- |
+| Ctrl+T | Open terminal launch dialog |
+| Ctrl+W | Close focused terminal tab |
+| Double click tab | Rename tab |
+| Double click titlebar | Maximize / restore |
+| Escape | Close a dialog when no operation is pending |
+| Ctrl+Enter in commit input | Commit reviewed worktree |
 
----
-
-## 📄 License
-MIT License.
+Global tab shortcuts are suspended while a modal dialog is open.

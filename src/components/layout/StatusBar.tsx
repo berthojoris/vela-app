@@ -8,7 +8,7 @@ export const StatusBar: React.FC = () => {
   const { activeWorktreeId, worktrees } = useWorktreeStore();
 
   const activeWorktree = worktrees.find((w) => w.id === activeWorktreeId);
-  const activeAgents = sessions.filter((s) => s.is_agent).length;
+  const activeAgents = sessions.filter((s) => s.is_agent && !s.exited).length;
 
   return (
     <footer className="h-6 shrink-0 bg-orca-darker border-t border-orca-border flex items-center justify-between px-3 text-[11px] text-orca-muted select-none font-mono">

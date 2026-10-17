@@ -1,157 +1,79 @@
-import React, { useState } from 'react';
-import { GitBranch, X, Plus, Bot, Sparkles } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { GitBranch, X } from 'lucide-react';
 import { useWorktreeStore } from '../../stores/useWorktreeStore';
 import { useTerminalStore } from '../../stores/useTerminalStore';
+import { errorMessage } from '../../lib/errors';
+import { useDialog } from '../../lib/useDialog';
+import { GitWorktree } from '../../types';
 
-interface CreateWorktreeModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-}
-
-export const CreateWorktreeModal: React.FC<CreateWorktreeModalProps> = ({
-  isOpen,
-  onClose,
-}) => {
+export const CreateWorktreeModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpen, onClose }) => {
   const [branchName, setBranchName] = useState('');
-  const [baseBranch, setBaseBranch] = useState('main');
-  const [autoLaunchAgent, setAutoLaunchAgent] = useState(true);
-  const [selectedAgent, setSelectedAgent] = useState('claude');
-
-  const { createWorktree, isLoading } = useWorktreeStore();
-  const { createSession } = useTerminalStore();
-
+  const [baseBranch, setBaseBranch] = useState('');
+  const [profileId, setProfileId] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [created, setCreated] = useState<GitWorktree | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const busyRef = useRef(false);
+  const launchedRef = useRef(false);
+  const { createWorktree, repoPath } = useWorktreeStore();
+  const { createSession, profiles, defaultProfileId } = useTerminalStore();
+  const dialogRef = useDialog(isOpen, onClose, isSubmitting, () => !launchedRef.current);
+  useEffect(() => {
+    if (isOpen) { launchedRef.current = false; setBranchName(''); setBaseBranch(''); setCreated(null); setError(null); setProfileId(defaultProfileId); }
+  }, [isOpen]);
   if (!isOpen) return null;
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!branchName.trim()) return;
-
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setIsSubmitting(true);
+    setError(null);
+    let worktree = created;
     try {
-      const wt = await createWorktree(branchName.trim(), baseBranch.trim() || undefined);
-
-      // Automatically launch agent in the new worktree if selected
-      if (autoLaunchAgent) {
-        await createSession({
-          title: `${selectedAgent} (${branchName})`,
-          shell: selectedAgent,
-          cwd: wt.path,
-          isAgent: true,
-          worktreeId: wt.id,
-        });
-      } else {
-        await createSession({
-          title: branchName,
-          cwd: wt.path,
-          worktreeId: wt.id,
-        });
+      const profile = profiles.find((candidate) => candidate.id === profileId);
+      if (!profile) throw new Error('Select an installed shell or agent before continuing.');
+      if (!worktree) {
+        worktree = await createWorktree(branchName.trim(), baseBranch.trim() || undefined);
+        setCreated(worktree);
       }
-
-      setBranchName('');
+      await createSession({ title: `${profile.name} (${worktree.branch})`, shell: profile.executable, args: profile.args, cwd: worktree.path, worktreeId: worktree.id, isAgent: profile.is_agent, agentType: profile.agent_type });
+      launchedRef.current = true;
       onClose();
-    } catch (err: any) {
-      alert(`Failed to create worktree: ${err.message || err}`);
-    }
+    } catch (error) {
+      setError(`${worktree ? `Worktree was created at ${worktree.path}, but its terminal could not start. Retry launch without creating another worktree.\n` : ''}${errorMessage(error)}`);
+    } finally { busyRef.current = false; setIsSubmitting(false); }
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 select-none text-xs">
-      <div className="w-full max-w-md bg-orca-darker border border-orca-border rounded-xl shadow-2xl overflow-hidden">
-        {/* Header */}
-        <div className="h-11 px-4 border-b border-orca-border flex items-center justify-between bg-orca-card/50">
-          <div className="flex items-center gap-2">
-            <GitBranch className="w-4 h-4 text-orca-accent" />
-            <h3 className="font-semibold text-white text-sm">New Isolated Worktree</h3>
-          </div>
-          <button
-            onClick={onClose}
-            className="w-7 h-7 rounded hover:bg-orca-hover text-orca-muted hover:text-white flex items-center justify-center transition-colors"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
-        {/* Form Body */}
-        <form onSubmit={handleSubmit} className="p-4 space-y-4">
-          <div>
-            <label className="block text-orca-muted mb-1 font-medium">
-              Task or Branch Name
+    <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4 text-sm">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="create-worktree-title" aria-busy={isSubmitting} className="w-full max-w-lg max-h-[90vh] overflow-y-auto bg-orca-darker border border-orca-border rounded-xl">
+        <header className="p-4 flex items-center justify-between gap-3">
+          <h2 id="create-worktree-title" className="font-semibold flex items-center gap-2"><GitBranch className="w-4 h-4" />New isolated worktree</h2>
+          <button type="button" disabled={isSubmitting} onClick={onClose} aria-label="Close worktree dialog" className="p-2 rounded hover:bg-orca-hover"><X className="w-4 h-4" /></button>
+        </header>
+        <form onSubmit={handleSubmit} className="p-4 pt-0 space-y-4">
+          <p className="text-orca-muted break-words select-text">Repository: {repoPath || 'No active repository'}</p>
+          {error && <p role="alert" className="p-3 rounded-md border border-orca-rose/40 whitespace-pre-wrap break-words select-text">{error}</p>}
+          <fieldset disabled={isSubmitting} className="space-y-4 min-w-0">
+            <label className="block">Branch name
+              <input required={!created} disabled={Boolean(created)} maxLength={200} value={branchName} onChange={(event) => setBranchName(event.target.value)} placeholder="feat/checkout-flow" className="mt-2 w-full p-2 rounded-md border border-orca-border bg-orca-darkest font-mono" />
             </label>
-            <input
-              type="text"
-              required
-              placeholder="e.g. feat/checkout-flow or agent-refactor"
-              value={branchName}
-              onChange={(e) => setBranchName(e.target.value)}
-              className="w-full bg-orca-darkest px-3 py-2 rounded-md border border-orca-border focus:border-orca-accent outline-none text-white text-xs font-mono"
-              autoFocus
-            />
-            <p className="text-[10px] text-orca-muted mt-1">
-              A dedicated folder and git branch will be created without touching your current files.
-            </p>
-          </div>
-
-          <div>
-            <label className="block text-orca-muted mb-1 font-medium">
-              Base Branch
+            <label className="block">Base branch or revision
+              <input disabled={Boolean(created)} maxLength={250} value={baseBranch} onChange={(event) => setBaseBranch(event.target.value)} placeholder="HEAD (current commit)" className="mt-2 w-full p-2 rounded-md border border-orca-border bg-orca-darkest font-mono" />
             </label>
-            <input
-              type="text"
-              placeholder="main"
-              value={baseBranch}
-              onChange={(e) => setBaseBranch(e.target.value)}
-              className="w-full bg-orca-darkest px-3 py-1.5 rounded-md border border-orca-border focus:border-orca-accent outline-none text-white text-xs font-mono"
-            />
-          </div>
-
-          <div className="p-3 bg-orca-card/40 border border-orca-border rounded-lg space-y-2">
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={autoLaunchAgent}
-                onChange={(e) => setAutoLaunchAgent(e.target.checked)}
-                className="rounded border-orca-border text-orca-accent bg-orca-darkest focus:ring-0"
-              />
-              <span className="font-medium text-white flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5 text-orca-emerald" />
-                Launch AI Coding Agent in new worktree
-              </span>
+            <label className="block">Launch shell or agent
+              <select value={profileId} onChange={(event) => setProfileId(event.target.value)} className="mt-2 w-full p-2 rounded-md border border-orca-border bg-orca-darkest">
+                <option value="" disabled>Select an installed profile</option>
+                {profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
+              </select>
             </label>
-
-            {autoLaunchAgent && (
-              <div className="pt-2 pl-6 flex items-center gap-2">
-                <span className="text-orca-muted">Select Agent:</span>
-                <select
-                  value={selectedAgent}
-                  onChange={(e) => setSelectedAgent(e.target.value)}
-                  className="bg-orca-darkest px-2 py-1 rounded border border-orca-border text-orca-text text-xs outline-none"
-                >
-                  <option value="claude">Claude Code (claude)</option>
-                  <option value="gemini">Gemini CLI (gemini)</option>
-                  <option value="aider">Aider (aider)</option>
-                  <option value="powershell.exe">PowerShell (interactive)</option>
-                </select>
-              </div>
-            )}
-          </div>
-
-          {/* Footer Buttons */}
-          <div className="pt-2 flex items-center justify-end gap-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="h-8 px-3 rounded-md hover:bg-orca-hover text-orca-muted hover:text-white transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={isLoading || !branchName.trim()}
-              className="h-8 px-4 rounded-md bg-orca-accent hover:bg-orca-accentHover disabled:opacity-40 text-white font-medium flex items-center gap-1.5 transition-colors shadow-sm"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Create Worktree</span>
-            </button>
-          </div>
+            <p className="text-orca-muted">Agents keep their normal permission checks. A worktree isolates Git changes, not access to your computer.</p>
+          </fieldset>
+          <footer className="flex justify-end gap-2">
+            <button type="button" disabled={isSubmitting} onClick={onClose} className="px-3 py-2 rounded-md border border-orca-border hover:bg-orca-hover">{created ? 'Close' : 'Cancel'}</button>
+            <button type="submit" disabled={isSubmitting || (!created && (!branchName.trim() || !repoPath)) || !profileId} className="px-3 py-2 rounded-md bg-orca-accent hover:bg-orca-accentHover disabled:opacity-40 font-semibold">{isSubmitting ? 'Working…' : created ? 'Retry terminal launch' : 'Create worktree'}</button>
+          </footer>
         </form>
       </div>
     </div>

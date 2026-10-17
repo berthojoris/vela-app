@@ -1,12 +1,14 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { WebglAddon } from '@xterm/addon-webgl';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { SearchAddon } from '@xterm/addon-search';
 import '@xterm/xterm/css/xterm.css';
 import { tauriIpc } from '../../lib/tauriIpc';
 import { useTerminalStore } from '../../stores/useTerminalStore';
+import { cwdFromOsc7 } from '../../lib/shellIntegration';
+import { errorMessage } from '../../lib/errors';
+import { useNoticeStore } from '../../stores/useNoticeStore';
 
 interface XTermViewProps {
   sessionId: string;
@@ -17,10 +19,24 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive }) => 
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const [streamError, setStreamError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!containerRef.current) return;
     let disposed = false;
+    let exited = Boolean(useTerminalStore.getState().sessions.find((session) => session.id === sessionId)?.exited);
+    let fitTimer: ReturnType<typeof setTimeout> | undefined;
+    let resizeFrame = 0;
+    let lastSize = '';
+    let writing = false;
+    let queuedInput = '';
+    const report = (error: unknown) => {
+      if (!disposed && !exited) {
+        const message = errorMessage(error);
+        setStreamError(message);
+        void tauriIpc.reportError(`Terminal ${sessionId}: ${message}`).catch((error) => console.error('Unable to write diagnostic log', error));
+      }
+    };
 
     // Create xterm instance with clean Vela dark theme
     const term = new Terminal({
@@ -61,31 +77,71 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive }) => 
     term.loadAddon(new WebLinksAddon());
     term.loadAddon(new SearchAddon());
 
-    term.open(containerRef.current);
-
-    // Try GPU-accelerated WebGL Addon for 60 FPS rendering
-    try {
-      const webglAddon = new WebglAddon();
-      webglAddon.onContextLoss(() => {
-        webglAddon.dispose();
-      });
-      term.loadAddon(webglAddon);
-    } catch (e) {
-      console.warn('WebGL addon could not be initialized, falling back to standard canvas/DOM', e);
+    try { term.open(containerRef.current); }
+    catch (error) {
+      term.dispose();
+      report(error);
+      void tauriIpc.killTerminal(sessionId).then(() => useTerminalStore.getState().markSessionExited(sessionId))
+        .catch((error) => useNoticeStore.getState().report('Unable to stop terminal after renderer failure', error));
+      return;
     }
+
+    // Load the optional renderer separately; a GPU failure must not kill a usable terminal.
+    void import('@xterm/addon-webgl').then(({ WebglAddon }) => {
+      if (disposed) return;
+      try {
+        const addon = new WebglAddon();
+        addon.onContextLoss(() => addon.dispose());
+        term.loadAddon(addon);
+      } catch (error) { console.warn('Using the standard terminal renderer', error); }
+    }).catch((error) => console.warn('WebGL is unavailable; using the standard terminal renderer', error));
 
     termRef.current = term;
     fitAddonRef.current = fitAddon;
 
-    // Initial fit
-    setTimeout(() => {
-      fitAddon.fit();
-      tauriIpc.resizeTerminal(sessionId, term.cols, term.rows);
-    }, 50);
+    const fit = () => {
+      if (disposed || exited || !containerRef.current?.clientWidth || !containerRef.current.clientHeight) return;
+      try {
+        fitAddon.fit();
+        const size = `${term.cols}:${term.rows}`;
+        if (size === lastSize) return;
+        lastSize = size;
+        void tauriIpc.resizeTerminal(sessionId, term.cols, term.rows).catch(report);
+      } catch (error) { report(error); }
+    };
+    fitTimer = setTimeout(fit, 50);
+
+    const cwdHandler = term.parser.registerOscHandler(7, (data) => {
+      const cwd = cwdFromOsc7(data);
+      if (!disposed && cwd) useTerminalStore.getState().updateSessionCwd(sessionId, cwd);
+      return true;
+    });
+
+    const sendInput = async (data: string) => {
+      if (disposed || exited) return;
+      if (queuedInput.length + data.length > 262144) {
+        report('Paste exceeds the input limit. Paste fewer than 262,144 characters at a time.');
+        return;
+      }
+      queuedInput += data;
+      if (writing) return;
+      writing = true;
+      try {
+        while (queuedInput && !disposed && !exited) {
+          let end = Math.min(2048, queuedInput.length);
+          // Do not split a UTF-16 surrogate pair between IPC messages.
+          if (end < queuedInput.length && /[\uD800-\uDBFF]/.test(queuedInput[end - 1])) --end;
+          const chunk = queuedInput.slice(0, end);
+          queuedInput = queuedInput.slice(end);
+          await tauriIpc.writeTerminal(sessionId, chunk);
+        }
+      } catch (error) { queuedInput = ''; report(error); }
+      finally { writing = false; }
+    };
 
     // Terminal data input listener (keyboard -> Rust PTY)
     const onDataDisposable = term.onData((data) => {
-      tauriIpc.writeTerminal(sessionId, data);
+      void sendInput(data);
     });
 
     // Let Ctrl+V / Ctrl+Shift+V fall through to the browser paste event
@@ -116,20 +172,25 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive }) => 
       if (!hasImage) return;
       e.preventDefault();
       e.stopPropagation();
-      tauriIpc.writeTerminal(sessionId, '\x1bv');
+      void sendInput('\x1bv');
     };
     container.addEventListener('paste', handlePaste, true);
 
     // PTY output listener (Rust ConPTY -> xterm)
     let unlistenPtyOutput: (() => void) | null = null;
     let unlistenPtyExit: (() => void) | null = null;
+    let unlistenPtyError: (() => void) | null = null;
 
     const connectPty = async () => {
       try {
         // Register both listeners before opening the backend reader gate.
         // The terminal instance already exists, so the first PTY chunk has a sink.
         const outputUnlisten = await tauriIpc.onPtyOutput(sessionId, (bytes) => {
-          if (!disposed) term.write(bytes);
+          if (!disposed) {
+            term.write(bytes, () => {
+              if (!disposed) void tauriIpc.acknowledgeTerminalOutput(sessionId, bytes.byteLength).catch(report);
+            });
+          }
         });
         if (disposed) {
           outputUnlisten();
@@ -137,9 +198,11 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive }) => 
         }
         unlistenPtyOutput = outputUnlisten;
 
-        const exitUnlisten = await tauriIpc.onPtyExit(sessionId, () => {
+        const exitUnlisten = await tauriIpc.onPtyExit(sessionId, (code) => {
           if (disposed) return;
-          term.writeln('\r\n\x1b[90m[Process completed]\x1b[0m');
+          exited = true;
+          queuedInput = '';
+          term.writeln(`\r\n\x1b[90m[Process completed${code == null ? '' : `, exit code ${code}`}]\x1b[0m`);
           useTerminalStore.getState().markSessionExited(sessionId);
         });
         if (disposed) {
@@ -148,14 +211,22 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive }) => 
         }
         unlistenPtyExit = exitUnlisten;
 
+        const errorUnlisten = await tauriIpc.onPtyError(sessionId, (message) => {
+          if (disposed) return;
+          report(message);
+          void tauriIpc.killTerminal(sessionId).catch((error) => useNoticeStore.getState().report('Unable to stop failed terminal', error));
+        });
+        if (disposed) { errorUnlisten(); return; }
+        unlistenPtyError = errorUnlisten;
+
         await tauriIpc.startTerminalOutput(sessionId);
       } catch (error) {
         if (disposed) return;
         console.error('Failed to connect terminal output stream', error);
+        report(error);
         term.writeln('\r\n\x1b[31m[Unable to start terminal output stream]\x1b[0m');
-        useTerminalStore.getState().markSessionExited(sessionId);
-        void tauriIpc.killTerminal(sessionId).catch((killError) => {
-          console.error('Failed to stop terminal after stream setup failed', killError);
+        void tauriIpc.killTerminal(sessionId).then(() => useTerminalStore.getState().markSessionExited(sessionId)).catch((killError) => {
+          useNoticeStore.getState().report('Unable to stop terminal after stream setup failed', killError);
         });
       }
     };
@@ -163,40 +234,55 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive }) => 
 
     // Window / Container resize observer
     const resizeObserver = new ResizeObserver(() => {
-      if (containerRef.current && containerRef.current.clientWidth > 0) {
-        fitAddon.fit();
-        tauriIpc.resizeTerminal(sessionId, term.cols, term.rows);
-      }
+      cancelAnimationFrame(resizeFrame);
+      resizeFrame = requestAnimationFrame(fit);
     });
     resizeObserver.observe(containerRef.current);
 
     return () => {
       disposed = true;
+      clearTimeout(fitTimer);
+      cancelAnimationFrame(resizeFrame);
+      queuedInput = '';
+      cwdHandler.dispose();
       onDataDisposable.dispose();
       container.removeEventListener('paste', handlePaste, true);
       resizeObserver.disconnect();
       if (unlistenPtyOutput) unlistenPtyOutput();
       if (unlistenPtyExit) unlistenPtyExit();
+      if (unlistenPtyError) unlistenPtyError();
+      termRef.current = null;
+      fitAddonRef.current = null;
       term.dispose();
     };
   }, [sessionId]);
 
   // Focus terminal when active
   useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
     if (isActive && termRef.current) {
       termRef.current.focus();
       if (fitAddonRef.current) {
-        setTimeout(() => fitAddonRef.current?.fit(), 20);
+        timer = setTimeout(() => {
+          try { fitAddonRef.current?.fit(); } catch (error) { setStreamError(errorMessage(error)); }
+        }, 20);
       }
     }
+    return () => clearTimeout(timer);
   }, [isActive]);
 
   return (
+    <div className="w-full h-full relative">
+    {streamError && <div role="alert" className="absolute z-10 inset-x-2 top-2 p-3 bg-orca-darker border border-orca-rose/40 rounded-md text-sm text-orca-text break-words select-text">
+      <span>{streamError}</span>
+      <button type="button" className="ml-3 underline" onClick={() => setStreamError(null)}>Dismiss</button>
+    </div>}
     <div
       ref={containerRef}
       className={`w-full h-full bg-orca-darkest overflow-hidden ${
         isActive ? 'ring-1 ring-orca-borderLight' : 'opacity-85'
       }`}
     />
+    </div>
   );
 };

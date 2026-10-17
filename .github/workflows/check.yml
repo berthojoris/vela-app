@@ -1,0 +1,28 @@
+name: Windows checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm ci
+      - run: npm test
+      - run: npm run test:ui
+      - run: npm run build
+      - run: cargo check --locked
+        working-directory: src-tauri
+      - run: cargo test --locked --lib
+        working-directory: src-tauri
+      - run: npx @tauri-apps/cli build --no-bundle

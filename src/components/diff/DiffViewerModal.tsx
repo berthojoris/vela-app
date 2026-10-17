@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useDiffStore } from '../../stores/useDiffStore';
+import { useDialog } from '../../lib/useDialog';
 import {
   X,
   GitCommit,
@@ -26,6 +27,7 @@ export const DiffViewerModal: React.FC = () => {
     error,
     commitError,
     commitMessage,
+    commitResult,
     closeDiffModal,
     selectFile,
     setCommitMessage,
@@ -36,19 +38,10 @@ export const DiffViewerModal: React.FC = () => {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [copied, setCopied] = useState(false);
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const dialogRef = useDialog(isOpen, closeDiffModal, isCommitting);
+  useEffect(() => () => clearTimeout(copyTimer.current), []);
 
-  // Close on Escape key
-  useEffect(() => {
-    if (!isOpen) return;
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        closeDiffModal();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, closeDiffModal]);
 
   // Reset search when modal opens/closes
   useEffect(() => {
@@ -92,7 +85,8 @@ export const DiffViewerModal: React.FC = () => {
     try {
       await navigator.clipboard.writeText(path);
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      clearTimeout(copyTimer.current);
+      copyTimer.current = setTimeout(() => setCopied(false), 2000);
     } catch {
       // Ignore clipboard error
     }
@@ -116,7 +110,7 @@ export const DiffViewerModal: React.FC = () => {
 
   return (
     <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-[2px] flex items-center justify-center p-6 select-none text-xs">
-      <div className="w-full max-w-5xl h-[85vh] bg-orca-darker border border-orca-border rounded-xl flex flex-col overflow-hidden">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Visual diff and review" aria-busy={isCommitting} className="w-full max-w-5xl h-[85vh] bg-orca-darker border border-orca-border rounded-xl flex flex-col overflow-hidden">
         {/* Modal Header */}
         <div className="h-11 px-4 border-b border-orca-border flex items-center justify-between bg-orca-card/60">
           <div className="flex items-center gap-2.5 min-w-0">
@@ -152,7 +146,7 @@ export const DiffViewerModal: React.FC = () => {
           <div className="flex items-center gap-1.5">
             <button
               onClick={() => refreshDiffs()}
-              disabled={isLoading}
+              disabled={isLoading || isCommitting}
               className="h-7 px-2 rounded hover:bg-orca-hover text-orca-muted hover:text-white flex items-center gap-1 transition-colors border border-transparent hover:border-orca-border disabled:opacity-40"
               title="Refresh changes"
             >
@@ -162,6 +156,7 @@ export const DiffViewerModal: React.FC = () => {
 
             <button
               onClick={closeDiffModal}
+              disabled={isCommitting}
               className="w-7 h-7 rounded hover:bg-orca-hover text-orca-muted hover:text-white flex items-center justify-center transition-colors"
               title="Close (Esc)"
             >
@@ -169,6 +164,8 @@ export const DiffViewerModal: React.FC = () => {
             </button>
           </div>
         </div>
+
+        {commitResult && <p role="status" className="px-4 py-3 text-sm text-orca-emerald bg-orca-darker">Commit created successfully.{error ? ' Refresh failed; do not submit the same commit again.' : ''}</p>}
 
         {/* Global Error Banner */}
         {error && (
@@ -458,14 +455,15 @@ export const DiffViewerModal: React.FC = () => {
                     handleCommitSubmit(e);
                   }
                 }}
-                disabled={isLoading || isCommitting || diffs.length === 0}
+                disabled={isLoading || isCommitting || Boolean(error) || diffs.length === 0}
+                maxLength={16000}
                 className="flex-1 bg-transparent border-none outline-none text-white text-xs placeholder:text-orca-muted disabled:opacity-40"
               />
             </div>
 
             <button
               type="submit"
-              disabled={isLoading || isCommitting || diffs.length === 0 || !commitMessage.trim()}
+              disabled={isLoading || isCommitting || Boolean(error) || diffs.length === 0 || !commitMessage.trim()}
               className="h-8 px-4 rounded-md bg-orca-accent hover:bg-orca-accentHover disabled:opacity-40 text-white font-medium flex items-center gap-1.5 transition-colors cursor-pointer disabled:cursor-not-allowed"
             >
               {isCommitting ? (

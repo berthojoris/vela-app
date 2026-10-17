@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import {
   DetectedAgent,
   AgentType,
@@ -15,6 +16,14 @@ export const isTauri = () => {
 };
 
 export const tauriIpc = {
+  async reportError(message: string): Promise<void> {
+    if (!isTauri()) return;
+    await invoke('report_frontend_error', { message: message.slice(0, 8000) });
+  },
+  onAppError(callback: (message: string) => void): Promise<UnlistenFn> {
+    if (!isTauri()) return Promise.resolve(() => {});
+    return listen<string>('app-error', (event) => callback(event.payload));
+  },
   async spawnTerminal(params: {
     id: string;
     title: string;
@@ -74,6 +83,11 @@ export const tauriIpc = {
   async startTerminalOutput(id: string): Promise<void> {
     if (!isTauri()) return;
     await invoke('start_terminal_output', { id });
+  },
+
+  async acknowledgeTerminalOutput(id: string, bytes: number): Promise<void> {
+    if (!isTauri()) return;
+    await invoke('acknowledge_terminal_output', { id, bytes });
   },
 
   async findGitRepo(path?: string | null): Promise<string | null> {
@@ -176,6 +190,16 @@ export const tauriIpc = {
     return await invoke<boolean>('is_window_maximized');
   },
 
+  async showWindow(): Promise<void> {
+    if (!isTauri()) return;
+    await invoke('show_window');
+  },
+
+  onWindowResized(callback: () => void): Promise<UnlistenFn> {
+    if (!isTauri()) return Promise.resolve(() => {});
+    return getCurrentWindow().onResized(callback);
+  },
+
   async selectDirectory(options?: {
     title?: string;
     defaultPath?: string;
@@ -197,8 +221,8 @@ export const tauriIpc = {
       try {
         const fallback = await invoke<string | null>('select_directory');
         return fallback ? fallback.replace(/\\/g, '/') : null;
-      } catch {
-        return null;
+      } catch (fallbackError) {
+        throw new Error(`Unable to open the directory picker: ${String(fallbackError)}. You can type the directory path instead.`);
       }
     }
   },
@@ -215,12 +239,17 @@ export const tauriIpc = {
     });
   },
 
-  onPtyExit(id: string, callback: () => void): Promise<UnlistenFn> {
+  onPtyError(id: string, callback: (message: string) => void): Promise<UnlistenFn> {
+    if (!isTauri()) return Promise.resolve(() => {});
+    return listen<string>(`pty-error-${id}`, (event) => callback(event.payload));
+  },
+
+  onPtyExit(id: string, callback: (exitCode: number | null) => void): Promise<UnlistenFn> {
     if (!isTauri()) {
       return Promise.resolve(() => {});
     }
-    return listen(`pty-exit-${id}`, () => {
-      callback();
+    return listen<number | null>(`pty-exit-${id}`, (event) => {
+      callback(event.payload);
     });
   },
 };

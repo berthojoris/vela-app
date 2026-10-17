@@ -26,6 +26,9 @@ sysinfo = "0.33"
 regex = "1"
 chrono = "0.4"
 
+[dev-dependencies]
+tauri = { version = "2", features = ["test"] }
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
     "Win32_System_Console",

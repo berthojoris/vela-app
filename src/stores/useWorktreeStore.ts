@@ -1,18 +1,12 @@
 import { create } from 'zustand';
 import { GitWorktree } from '../types';
 import { tauriIpc } from '../lib/tauriIpc';
+import { errorMessage } from '../lib/errors';
 
 export function normalizePath(path: string): string {
-  if (!path) return '';
-  let p = path.trim().replace(/\\/g, '/');
-  const msysMatch = p.match(/^\/([a-zA-Z])\/(.*)/);
-  if (msysMatch) {
-    p = `${msysMatch[1].toUpperCase()}:/${msysMatch[2]}`;
-  }
-  if (p.length > 3 && p.endsWith('/')) {
-    p = p.slice(0, -1);
-  }
-  return p.toLowerCase();
+  let result = path.trim().replace(/\\/g, '/').replace(/^\/([a-z])\//i, (_, drive: string) => `${drive.toUpperCase()}:/`);
+  if (result.length > 3) result = result.replace(/\/+$/, '');
+  return result.toLowerCase();
 }
 
 interface WorktreeState {
@@ -21,8 +15,8 @@ interface WorktreeState {
   activeWorktreeId: string | null;
   activeSessionCwd: string | null;
   isLoading: boolean;
+  isMutating: boolean;
   error: string | null;
-
   initRepo: () => Promise<void>;
   setRepoPath: (path: string) => Promise<void>;
   refreshWorktrees: (background?: boolean) => Promise<void>;
@@ -33,314 +27,117 @@ interface WorktreeState {
   clearError: () => void;
 }
 
-// Ignore asynchronous results from sessions/repositories that are no longer active.
-let sessionSyncRequest = 0;
-let worktreeRefreshRequest = 0;
+let syncSequence = 0;
+let refreshSequence = 0;
+let pendingRefresh: { repo: string; promise: Promise<void> } | null = null;
 
-// Clean up any legacy repo paths from localStorage to ensure clean startup
-try {
-  localStorage.removeItem('vela_repo_path');
-  localStorage.removeItem('orca_repo_path');
-} catch {}
+try { localStorage.removeItem('vela_repo_path'); localStorage.removeItem('orca_repo_path'); } catch { /* Private browsing can disable storage. */ }
 
 export const useWorktreeStore = create<WorktreeState>((set, get) => ({
-  repoPath: null,
-  worktrees: [],
-  activeWorktreeId: null,
-  activeSessionCwd: null,
-  isLoading: false,
-  error: null,
+  repoPath: null, worktrees: [], activeWorktreeId: null, activeSessionCwd: null,
+  isLoading: false, isMutating: false, error: null,
 
   initRepo: async () => {
-    sessionSyncRequest += 1;
-    worktreeRefreshRequest += 1;
-    // Ensure clean startup state with no leftover history
-    try {
-      localStorage.removeItem('vela_repo_path');
-      localStorage.removeItem('orca_repo_path');
-    } catch {}
-
-    set({
-      repoPath: null,
-      worktrees: [],
-      activeWorktreeId: null,
-      activeSessionCwd: null,
-      isLoading: false,
-      error: null,
-    });
+    ++syncSequence; ++refreshSequence; pendingRefresh = null;
+    set({ repoPath: null, worktrees: [], activeWorktreeId: null, activeSessionCwd: null, isLoading: false, error: null });
   },
+  setRepoPath: async (path) => { await get().syncWithSession({ cwd: path }); },
 
-  setRepoPath: async (path: string) => {
-    const requestId = ++sessionSyncRequest;
-    worktreeRefreshRequest += 1;
-    const cleanPath = path.trim();
-    if (!cleanPath) {
-      set({ error: 'Please specify a directory path' });
+  syncWithSession: async (session) => {
+    const request = ++syncSequence;
+    ++refreshSequence;
+    pendingRefresh = null;
+    const cwd = session?.cwd?.trim() || null;
+    if (!cwd) {
+      set({ repoPath: null, worktrees: [], activeWorktreeId: null, activeSessionCwd: null, isLoading: false, error: null });
       return;
     }
-    set({ isLoading: true, error: null });
+    // Never leave the previous repository actionable while a new directory is being resolved.
+    const previous = get();
+    set({ repoPath: null, worktrees: [], activeWorktreeId: null, activeSessionCwd: cwd, isLoading: true, error: null });
     try {
-      const root = await tauriIpc.findGitRepo(cleanPath);
-      if (requestId !== sessionSyncRequest) return;
-      if (root) {
-        const list = await tauriIpc.listWorktrees(root);
-        if (requestId !== sessionSyncRequest) return;
-        set({
-          repoPath: root,
-          worktrees: list,
-          activeWorktreeId: list[0]?.id || null,
-          isLoading: false,
-          error: null,
-        });
-      } else {
-        set({
-          isLoading: false,
-          error: `Directory '${cleanPath}' is not inside a Git repository`,
-        });
-      }
-    } catch (err: any) {
-      if (requestId !== sessionSyncRequest) return;
-      set({
-        isLoading: false,
-        error: err.toString(),
+      const root = await tauriIpc.findGitRepo(cwd);
+      if (request !== syncSequence) return;
+      if (!root) { set({ isLoading: false }); return; }
+      const sameRepo = previous.worktrees.some((worktree) => normalizePath(worktree.path) === normalizePath(root));
+      const list = sameRepo ? previous.worktrees : await tauriIpc.listWorktrees(root);
+      if (request !== syncSequence) return;
+      // Longest prefix wins for nested worktrees; findGitRepo above detects nested repositories too.
+      const matched = [...list].sort((a, b) => b.path.length - a.path.length).find((worktree) => {
+        const path = normalizePath(worktree.path);
+        return normalizePath(cwd) === path || normalizePath(cwd).startsWith(`${path}/`);
       });
+      set({ repoPath: sameRepo ? previous.repoPath || root : root, worktrees: list, activeWorktreeId: matched?.id ?? list[0]?.id ?? null, isLoading: false });
+      if (sameRepo) void get().refreshWorktrees(true);
+    } catch (error) {
+      if (request === syncSequence) set({ isLoading: false, error: errorMessage(error, 'Unable to detect this repository. Check Git installation and directory permissions.') });
     }
   },
 
   refreshWorktrees: async (background = false) => {
-    const { repoPath } = get();
-    if (!repoPath) return;
-    const requestId = ++worktreeRefreshRequest;
-    if (!background) {
-      set({ isLoading: true });
-    }
-    const startTime = Date.now();
-    try {
-      const list = await tauriIpc.listWorktrees(repoPath);
-      if (!background) {
-        const elapsed = Date.now() - startTime;
-        if (elapsed < 300) {
-          await new Promise((r) => setTimeout(r, 300 - elapsed));
-        }
-      }
-      if (requestId !== worktreeRefreshRequest || get().repoPath !== repoPath) return;
-      set((state) => {
-        if (requestId !== worktreeRefreshRequest || state.repoPath !== repoPath) {
-          return state;
-        }
-        const stillValid = list.some((w) => w.id === state.activeWorktreeId);
-        const nextActiveId = stillValid ? state.activeWorktreeId : (list[0]?.id || null);
-
-        const isUnchanged =
-          state.activeWorktreeId === nextActiveId &&
-          state.worktrees.length === list.length &&
-          state.worktrees.every(
-            (w, i) =>
-              w.id === list[i].id &&
-              w.path === list[i].path &&
-              w.branch === list[i].branch &&
-              w.dirty_files_count === list[i].dirty_files_count
-          );
-
-        if (isUnchanged && !state.isLoading) {
-          return state;
-        }
-
-        return {
-          worktrees: list,
-          activeWorktreeId: nextActiveId,
-          isLoading: false,
-        };
-      });
-    } catch (err: any) {
-      if (requestId !== worktreeRefreshRequest || get().repoPath !== repoPath) return;
-      if (!background) {
-        set({ isLoading: false, error: err.toString() });
-      } else {
-        set({ isLoading: false });
-      }
-    }
-  },
-
-  syncWithSession: async (session?: { cwd?: string; worktree_id?: string | null } | null) => {
-    const requestId = ++sessionSyncRequest;
-    if (!session) {
-      worktreeRefreshRequest += 1;
-      const {
-        repoPath,
-        worktrees,
-        activeWorktreeId,
-        activeSessionCwd,
-        isLoading,
-        error,
-      } = get();
-      if (
-        repoPath !== null ||
-        worktrees.length > 0 ||
-        activeWorktreeId !== null ||
-        activeSessionCwd !== null ||
-        isLoading ||
-        error !== null
-      ) {
-        set({
-          repoPath: null,
-          worktrees: [],
-          activeWorktreeId: null,
-          activeSessionCwd: null,
-          isLoading: false,
-          error: null,
-        });
-      }
-      return;
-    }
-
-    const cwd = session.cwd?.trim() || '';
-    const worktreeId = session.worktree_id;
-    const { repoPath, worktrees, activeWorktreeId, activeSessionCwd } = get();
-
-    // 1. If session has explicit worktree_id, find it in current worktrees
-    if (worktreeId) {
-      const matched = worktrees.find((w) => w.id === worktreeId);
-      if (matched) {
-        if (activeWorktreeId !== matched.id || activeSessionCwd !== cwd) {
-          set({ activeWorktreeId: matched.id, activeSessionCwd: cwd });
-          get().refreshWorktrees(true);
-        }
-        return;
-      }
-    }
-
-    // 2. If cwd matches any worktree in the current repo:
-    if (cwd) {
-      const normCwd = normalizePath(cwd);
-      const matched = worktrees.find((w) => {
-        const normWPath = normalizePath(w.path);
-        return normCwd === normWPath || normCwd.startsWith(normWPath + '/');
-      });
-
-      if (matched) {
-        if (activeWorktreeId !== matched.id || activeSessionCwd !== cwd) {
-          set({ activeWorktreeId: matched.id, activeSessionCwd: cwd });
-          get().refreshWorktrees(true);
-        }
-        return;
-      }
-    }
-
-    // 3. If cwd does not match current worktrees, check if cwd belongs to another git repository
-    if (cwd) {
+    const { repoPath, isMutating } = get();
+    if (!repoPath || isMutating) return;
+    if (pendingRefresh?.repo === repoPath) return pendingRefresh.promise;
+    const request = ++refreshSequence;
+    if (!background) set({ isLoading: true });
+    const operation = (async () => {
       try {
-        const detectedRoot = await tauriIpc.findGitRepo(cwd);
-        if (requestId !== sessionSyncRequest) return;
-        if (detectedRoot) {
-          const normDetected = normalizePath(detectedRoot);
-          const normCurrentRepo = repoPath ? normalizePath(repoPath) : '';
-
-          if (normDetected !== normCurrentRepo) {
-            set({ isLoading: true });
-            const list = await tauriIpc.listWorktrees(detectedRoot);
-            if (requestId !== sessionSyncRequest) return;
-            const normCwd = normalizePath(cwd);
-            const matchedWt =
-              list.find((w) => {
-                const normW = normalizePath(w.path);
-                return normCwd === normW || normCwd.startsWith(normW + '/');
-              }) || list[0];
-
-            set({
-              repoPath: detectedRoot,
-              worktrees: list,
-              activeWorktreeId: matchedWt?.id || null,
-              activeSessionCwd: cwd,
-              isLoading: false,
-              error: null,
-            });
-            return;
-          } else {
-            if (activeSessionCwd !== cwd) {
-              set({ activeSessionCwd: cwd });
-            }
-            get().refreshWorktrees(true);
-          }
-        } else {
-          if (requestId !== sessionSyncRequest) return;
-          // cwd is not a git repository
-          if (
-            repoPath !== null ||
-            worktrees.length > 0 ||
-            activeWorktreeId !== null ||
-            activeSessionCwd !== cwd
-          ) {
-            set({
-              repoPath: null,
-              worktrees: [],
-              activeWorktreeId: null,
-              activeSessionCwd: cwd,
-              isLoading: false,
-              error: null,
-            });
-          }
-        }
-      } catch (e) {
-        if (requestId !== sessionSyncRequest) return;
-        console.warn('Failed to sync session git repo:', e);
+        const list = await tauriIpc.listWorktrees(repoPath);
+        if (request !== refreshSequence || get().repoPath !== repoPath) return;
+        const active = list.some((worktree) => worktree.id === get().activeWorktreeId) ? get().activeWorktreeId : list[0]?.id ?? null;
+        set({ worktrees: list, activeWorktreeId: active, isLoading: false, error: null });
+      } catch (error) {
+        if (request === refreshSequence && get().repoPath === repoPath) set({ isLoading: false, error: errorMessage(error, 'Unable to refresh worktrees. Check directory access, then refresh again.') });
       }
-    } else {
-      if (
-        repoPath !== null ||
-        worktrees.length > 0 ||
-        activeWorktreeId !== null ||
-        activeSessionCwd !== null
-      ) {
-        set({
-          repoPath: null,
-          worktrees: [],
-          activeWorktreeId: null,
-          activeSessionCwd: null,
-          isLoading: false,
-          error: null,
-        });
-      }
-    }
+    })();
+    const record = { repo: repoPath, promise: operation };
+    pendingRefresh = record;
+    try { await operation; } finally { if (pendingRefresh === record) pendingRefresh = null; }
   },
 
-  createWorktree: async (branch: string, baseBranch?: string) => {
-    const { repoPath } = get();
-    if (!repoPath) throw new Error('No repository selected');
-    set({ isLoading: true, error: null });
+  createWorktree: async (branch, baseBranch) => {
+    const { repoPath, isMutating } = get();
+    if (!repoPath) throw new Error('No repository selected. Open a terminal inside a Git repository.');
+    if (isMutating) throw new Error('Another worktree operation is running. Please wait.');
+    const context = syncSequence;
+    ++refreshSequence; pendingRefresh = null;
+    set({ isMutating: true, error: null });
     try {
-      const wt = await tauriIpc.createWorktree(repoPath, branch, baseBranch);
-      const list = await tauriIpc.listWorktrees(repoPath);
-      set({
-        worktrees: list,
-        activeWorktreeId: wt.id,
-        isLoading: false,
-      });
-      return wt;
-    } catch (err: any) {
-      set({ isLoading: false, error: err.toString() });
-      throw err;
-    }
+      const worktree = await tauriIpc.createWorktree(repoPath, branch, baseBranch);
+      // Creation succeeded; a failed list refresh is not a failed creation and must not invite duplicate creation.
+      if (context === syncSequence && get().repoPath === repoPath) {
+        set((state) => ({ worktrees: [...state.worktrees.filter((item) => item.id !== worktree.id), worktree], activeWorktreeId: worktree.id }));
+        try {
+          const list = await tauriIpc.listWorktrees(repoPath);
+          if (context === syncSequence && get().repoPath === repoPath) set({ worktrees: list });
+        } catch (error) {
+          if (context === syncSequence) set({ error: `Worktree created, but refresh failed: ${errorMessage(error)}` });
+        }
+      }
+      return worktree;
+    } catch (error) {
+      if (context === syncSequence) set({ error: errorMessage(error) });
+      throw error;
+    } finally { set({ isMutating: false }); }
   },
 
-  removeWorktree: async (worktreePath: string, force: boolean = false) => {
-    const { repoPath } = get();
-    if (!repoPath) return;
-    set({ isLoading: true });
+  removeWorktree: async (worktreePath, force = false) => {
+    const { repoPath, isMutating } = get();
+    if (!repoPath || isMutating) throw new Error('A repository must be selected and other worktree operations must finish first.');
+    const context = syncSequence;
+    ++refreshSequence; pendingRefresh = null;
+    set({ isMutating: true, error: null });
     try {
       await tauriIpc.removeWorktree(repoPath, worktreePath, force);
-      const list = await tauriIpc.listWorktrees(repoPath);
-      set({ worktrees: list, isLoading: false });
-    } catch (err: any) {
-      set({ isLoading: false, error: err.toString() });
-    }
+      if (context === syncSequence && get().repoPath === repoPath) {
+        const list = get().worktrees.filter((item) => normalizePath(item.path) !== normalizePath(worktreePath));
+        set({ worktrees: list, activeWorktreeId: list.some((item) => item.id === get().activeWorktreeId) ? get().activeWorktreeId : list[0]?.id ?? null });
+      }
+    } catch (error) {
+      if (context === syncSequence) set({ error: errorMessage(error) });
+      throw error;
+    } finally { set({ isMutating: false }); }
   },
-
-  selectWorktree: (id: string) => {
-    set({ activeWorktreeId: id });
-  },
-
-  clearError: () => {
-    set({ error: null });
-  },
+  selectWorktree: (id) => { if (get().worktrees.some((worktree) => worktree.id === id)) set({ activeWorktreeId: id }); },
+  clearError: () => set({ error: null }),
 }));

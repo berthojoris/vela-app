@@ -1,6 +1,4 @@
 export default {
-  plugins: {
-    tailwindcss: {},
-    autoprefixer: {},
-  },
+  // Tailwind v4 is processed by the official Vite plugin.
+  plugins: {},
 }
