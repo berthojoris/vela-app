@@ -80,7 +80,7 @@ export const TabBar: React.FC<TabBarProps> = ({ onOpenTerminalModal }) => {
               onClick={() => setActiveSession(session.id)}
               onDoubleClick={() => handleStartRename(session.id, session.title)}
               title={session.exited ? `${session.title} — Process completed` : session.title}
-              className={`group h-7 px-2.5 rounded flex items-center gap-2 text-xs cursor-pointer transition-all border shrink-0 max-w-[190px] ${
+              className={`group h-7 px-2.5 rounded flex items-center gap-2 text-xs cursor-pointer transition-all border shrink-0 max-w-[210px] ${
                 isActive
                   ? 'bg-orca-card border-orca-borderLight text-white font-medium shadow-sm'
                   : isSecondary

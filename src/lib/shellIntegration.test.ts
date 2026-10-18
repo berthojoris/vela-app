@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { cwdFromOsc7 } from './shellIntegration';
+import { cwdFromOsc7, formatTabTitle, getFriendlyShellName } from './shellIntegration';
 import { errorMessage } from './errors';
 
 it('decodes PowerShell, CMD, and MSYS prompt directory reports', () => {
@@ -16,4 +16,17 @@ it('handles every IPC error representation without throwing', () => {
   for (const error of [null, undefined, {}, 7, new Error(''), ' ']) expect(errorMessage(error, 'fallback')).toBe('fallback');
   expect(errorMessage({ message: 'Access denied' })).toBe('Access denied');
   expect(errorMessage('x'.repeat(10000))).toHaveLength(4000);
+});
+it('normalizes friendly shell names and formats tab titles consistently', () => {
+  expect(getFriendlyShellName('Windows PowerShell')).toBe('PowerShell');
+  expect(getFriendlyShellName('PowerShell 7')).toBe('PowerShell');
+  expect(getFriendlyShellName('WSL (Default Linux)')).toBe('WSL');
+  expect(getFriendlyShellName('Git Bash')).toBe('Git Bash');
+  expect(getFriendlyShellName('Command Prompt')).toBe('Command Prompt');
+
+  expect(formatTabTitle('Windows PowerShell', 'main')).toBe('PowerShell (main)');
+  expect(formatTabTitle('PowerShell 7', 'feat/test')).toBe('PowerShell (feat/test)');
+  expect(formatTabTitle('Git Bash', 'main')).toBe('Git Bash (main)');
+  expect(formatTabTitle('Windows PowerShell')).toBe('PowerShell');
+  expect(formatTabTitle('Command Prompt', null)).toBe('Command Prompt');
 });

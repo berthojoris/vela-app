@@ -78,3 +78,28 @@ it('rejects oversized pastes with an inline error instead of an unbounded queue'
   expect(screen.getByRole('alert').textContent).toContain('Paste exceeds');
   expect(ipc.writeTerminal).not.toHaveBeenCalled();
 });
+
+const pasteWith = (target: Element, text: string, items: { kind: string; type: string }[]) => {
+  const event = new Event('paste', { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'clipboardData', {
+    value: { getData: (type: string) => (type === 'text/plain' ? text : ''), items },
+  });
+  act(() => { target.dispatchEvent(event); });
+};
+
+it('forwards Ctrl+V for an image-only clipboard so the agent reads the OS clipboard', async () => {
+  const view = render(<XTermView sessionId="test" isActive />);
+  await waitFor(() => expect(ipc.startTerminalOutput).toHaveBeenCalled());
+  const target = view.container.querySelector('.bg-orca-darkest')!;
+  pasteWith(target, '', [{ kind: 'file', type: 'image/png' }]);
+  await waitFor(() => expect(ipc.writeTerminal).toHaveBeenCalledWith('test', '\x16'));
+  expect(ipc.writeTerminal.mock.calls.map((call) => call[1]).join('')).not.toContain('\x1bv');
+});
+
+it('leaves text pastes to the browser instead of synthesizing a key', async () => {
+  const view = render(<XTermView sessionId="test" isActive />);
+  await waitFor(() => expect(ipc.startTerminalOutput).toHaveBeenCalled());
+  const target = view.container.querySelector('.bg-orca-darkest')!;
+  pasteWith(target, 'ls -la', [{ kind: 'string', type: 'text/plain' }]);
+  expect(ipc.writeTerminal).not.toHaveBeenCalled();
+});

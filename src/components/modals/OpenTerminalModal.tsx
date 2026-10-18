@@ -15,6 +15,7 @@ import { useWorktreeStore } from '../../stores/useWorktreeStore';
 import { tauriIpc } from '../../lib/tauriIpc';
 import { errorMessage } from '../../lib/errors';
 import { useDialog } from '../../lib/useDialog';
+import { formatTabTitle } from '../../lib/shellIntegration';
 
 interface OpenTerminalModalProps {
   isOpen: boolean;
@@ -42,7 +43,7 @@ export const OpenTerminalModal: React.FC<OpenTerminalModalProps> = ({
   const activeWorktree = worktrees.find((w) => w.id === activeWorktreeId);
 
   const [targetDir, setTargetDir] = useState('');
-  const [selectedProfileId, setSelectedProfileId] = useState('pwsh');
+  const [selectedProfileId, setSelectedProfileId] = useState('agent-opencode');
   const [openInSplit, setOpenInSplit] = useState(false);
   const [isBrowsing, setIsBrowsing] = useState(false);
   const [isLaunching, setIsLaunching] = useState(false);
@@ -112,22 +113,28 @@ export const OpenTerminalModal: React.FC<OpenTerminalModalProps> = ({
     if (!profile) throw new Error('Select an available shell or agent. If it is missing, install it and reload profiles.');
     const previousActive = useTerminalStore.getState().activeSessionId;
 
-    // Determine tab title
-    let title = profile?.name || 'Terminal';
-    if (activeWorktree && finalDir === activeWorktree.path) {
-      title = activeWorktree.branch;
-    } else if (finalDir) {
-      const folderName = finalDir.split('/').pop() || finalDir;
-      title = `${profile?.name || 'Term'} (${folderName})`;
-    }
-
     let matchedWorktreeId: string | undefined = undefined;
+    let matchedBranch: string | undefined = undefined;
     if (finalDir) {
       const normFinal = finalDir.trim().replace(/\\/g, '/').toLowerCase();
       const wt = worktrees.find(
         (w) => w.path.trim().replace(/\\/g, '/').toLowerCase() === normFinal
       );
-      if (wt) matchedWorktreeId = wt.id;
+      if (wt) {
+        matchedWorktreeId = wt.id;
+        matchedBranch = wt.branch;
+      }
+    }
+
+    // Determine tab title
+    let title = formatTabTitle(profile?.name || 'Terminal');
+    if (matchedBranch) {
+      title = formatTabTitle(profile?.name || 'Terminal', matchedBranch);
+    } else if (activeWorktree && finalDir === activeWorktree.path) {
+      title = formatTabTitle(profile?.name || 'Terminal', activeWorktree.branch);
+    } else if (finalDir) {
+      const folderName = finalDir.split('/').pop() || finalDir;
+      title = formatTabTitle(profile?.name || 'Terminal', folderName);
     }
 
     await createSession({

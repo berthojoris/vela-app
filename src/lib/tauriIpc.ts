@@ -104,9 +104,14 @@ export const tauriIpc = {
     }
   },
 
-  async listWorktrees(repoPath: string): Promise<GitWorktree[]> {
+  async openDirectoryInExplorer(path: string): Promise<void> {
+    if (!isTauri()) return;
+    await invoke('open_directory_in_explorer', { path });
+  },
+
+  async listWorktrees(repoPath: string, checkStatus?: boolean): Promise<GitWorktree[]> {
     if (!isTauri()) return [];
-    return await invoke<GitWorktree[]>('list_worktrees', { repoPath });
+    return await invoke<GitWorktree[]>('list_worktrees', { repoPath, checkStatus });
   },
 
   async createWorktree(
@@ -154,6 +159,30 @@ export const tauriIpc = {
   async getShellProfiles(): Promise<ShellProfile[]> {
     if (!isTauri()) {
       return [
+        {
+          id: 'agent-opencode',
+          name: 'OpenCode',
+          executable: 'powershell.exe',
+          args: ['-NoLogo', '-NoExit', '-Command', 'opencode'],
+          is_agent: true,
+          agent_type: 'open_code',
+        },
+        {
+          id: 'agent-droid',
+          name: 'Droid CLI',
+          executable: 'powershell.exe',
+          args: ['-NoLogo', '-NoExit', '-Command', 'droid'],
+          is_agent: true,
+          agent_type: 'droid_cli',
+        },
+        {
+          id: 'agent-antigravity',
+          name: 'Antigravity',
+          executable: 'powershell.exe',
+          args: ['-NoLogo', '-NoExit', '-Command', 'agy'],
+          is_agent: true,
+          agent_type: 'antigravity',
+        },
         {
           id: 'pwsh',
           name: 'PowerShell',

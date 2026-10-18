@@ -8,6 +8,8 @@ pub enum AgentType {
     Aider,
     Codex,
     OpenCode,
+    DroidCli,
+    Antigravity,
     Custom(String),
 }
 
@@ -111,6 +113,9 @@ mod tests {
         assert_eq!(value["pid"], json!(null));
         assert_eq!(value["agent_type"], json!("open_code"));
         assert_eq!(value["agent_status"], json!(null));
+
+        let ag_val = serde_json::to_value(AgentType::Antigravity).expect("agent type should serialize");
+        assert_eq!(ag_val, json!("antigravity"));
     }
 
     #[test]

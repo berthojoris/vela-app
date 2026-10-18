@@ -1,4 +1,4 @@
-import { beforeEach, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { deferred, worktree } from '../test/helpers';
 import { GitWorktree } from '../types';
 
@@ -55,4 +55,63 @@ it('coalesces background refreshes and handles null IPC rejections', async () =>
   await Promise.all([a, b]);
   expect(store.getState().isLoading).toBe(false);
   expect(store.getState().error).toContain('Unable to refresh');
+});
+
+describe('autoGitStatus setting and tab switching behavior', () => {
+  it('defaults autoGitStatus to false (OFF)', () => {
+    expect(store.getState().autoGitStatus).toBe(false);
+  });
+
+  it('toggles autoGitStatus and triggers refresh when enabled', async () => {
+    store.setState({ repoPath: 'C:/A' });
+    ipc.listWorktrees.mockResolvedValue([worktree('A')]);
+    store.getState().toggleAutoGitStatus();
+    expect(store.getState().autoGitStatus).toBe(true);
+    expect(ipc.listWorktrees).toHaveBeenCalledWith('C:/A', true);
+
+    ipc.listWorktrees.mockClear();
+    store.getState().toggleAutoGitStatus();
+    expect(store.getState().autoGitStatus).toBe(false);
+    expect(ipc.listWorktrees).not.toHaveBeenCalled();
+  });
+
+  it('uses fast-path tab switching without calling listWorktrees when staying in the same worktree and autoGitStatus is OFF', async () => {
+    store.setState({
+      repoPath: 'C:/A',
+      worktrees: [worktree('A', 'C:/A'), worktree('B', 'C:/A/worktree-b')],
+      activeWorktreeId: 'A',
+      autoGitStatus: false,
+    });
+    ipc.listWorktrees.mockClear();
+
+    await store.getState().syncWithSession({ cwd: 'C:/A/worktree-b' });
+    expect(store.getState().activeWorktreeId).toBe('B');
+    expect(store.getState().activeSessionCwd).toBe('C:/A/worktree-b');
+    expect(ipc.listWorktrees).not.toHaveBeenCalled();
+    expect(ipc.findGitRepo).not.toHaveBeenCalled();
+  });
+
+  it('passes checkStatus: false to listWorktrees when loading a new repo with autoGitStatus OFF', async () => {
+    store.setState({ repoPath: null, worktrees: [], autoGitStatus: false });
+    ipc.findGitRepo.mockResolvedValue('C:/NewRepo');
+    ipc.listWorktrees.mockResolvedValue([worktree('NewRepo', 'C:/NewRepo')]);
+
+    await store.getState().syncWithSession({ cwd: 'C:/NewRepo' });
+    expect(ipc.listWorktrees).toHaveBeenCalledWith('C:/NewRepo', false);
+  });
+
+  it('triggers background refresh on tab switch when autoGitStatus is ON', async () => {
+    store.setState({
+      repoPath: 'C:/A',
+      worktrees: [worktree('A', 'C:/A'), worktree('B', 'C:/A/worktree-b')],
+      activeWorktreeId: 'A',
+      autoGitStatus: true,
+    });
+    ipc.listWorktrees.mockClear();
+    ipc.listWorktrees.mockResolvedValue([worktree('A', 'C:/A'), worktree('B', 'C:/A/worktree-b')]);
+
+    await store.getState().syncWithSession({ cwd: 'C:/A/worktree-b' });
+    expect(store.getState().activeWorktreeId).toBe('B');
+    expect(ipc.listWorktrees).toHaveBeenCalledWith('C:/A', true);
+  });
 });

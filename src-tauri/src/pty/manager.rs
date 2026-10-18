@@ -458,6 +458,10 @@ impl PtyManager {
             Err(errors.join("\n"))
         }
     }
+
+    pub fn cancel_shutdown(&self) {
+        self.closing.store(false, Ordering::Release);
+    }
 }
 
 fn terminate_tree(session: &ActiveSession) -> Result<(), String> {
@@ -509,7 +513,7 @@ fn configure_shell(command: &mut CommandBuilder, shell: &str, args: &[String]) {
     }) {
         command.arg("-NoExit");
         command.arg("-Command");
-        command.arg("$global:__VelaOriginalPrompt = $function:prompt; function global:prompt { try { if ($PWD.Provider.Name -eq 'FileSystem') { $u = [uri]($PWD.ProviderPath + [IO.Path]::DirectorySeparatorChar); [Console]::Write(([char]27) + ']7;' + $u.AbsoluteUri + ([char]7)) } } catch {} ; if ($global:__VelaOriginalPrompt) { & $global:__VelaOriginalPrompt } else { 'PS ' + $PWD + '> ' } }");
+        command.arg("try { Set-Alias -Name oc -Value opencode -ErrorAction SilentlyContinue } catch {}; $global:__VelaOriginalPrompt = $function:prompt; function global:prompt { try { if ($PWD.Provider.Name -eq 'FileSystem') { $u = [uri]($PWD.ProviderPath + [IO.Path]::DirectorySeparatorChar); [Console]::Write(([char]27) + ']7;' + $u.AbsoluteUri + ([char]7)) } } catch {} ; if ($global:__VelaOriginalPrompt) { & $global:__VelaOriginalPrompt } else { 'PS ' + $PWD + '> ' } }");
     } else if matches!(binary.as_str(), "cmd" | "cmd.exe") {
         command.env(
             "PROMPT",

@@ -136,8 +136,12 @@ async fn find_git_repo(path: Option<String>) -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-async fn list_worktrees(repo_path: String) -> Result<Vec<GitWorktree>, String> {
-    tokio::task::spawn_blocking(move || GitManager::list_worktrees(&repo_path))
+async fn list_worktrees(
+    repo_path: String,
+    check_status: Option<bool>,
+) -> Result<Vec<GitWorktree>, String> {
+    let check = check_status.unwrap_or(true);
+    tokio::task::spawn_blocking(move || GitManager::list_worktrees(&repo_path, check))
         .await
         .map_err(|e| format!("Task execution error: {}", e))?
 }
@@ -292,6 +296,42 @@ fn get_current_dir() -> Result<String, String> {
         .map_err(|e| e.to_string())
 }
 
+pub fn format_explorer_path(path: &str) -> Result<String, String> {
+    let trimmed = path.trim().trim_matches('"');
+    let path_buf = std::path::PathBuf::from(trimmed);
+    if !path_buf.is_dir() {
+        return Err(format!("Directory does not exist: {}", path_buf.display()));
+    }
+    let mut win_path = path_buf.to_string_lossy().replace('/', "\\");
+    while win_path.len() > 3 && win_path.ends_with('\\') {
+        win_path.pop();
+    }
+    Ok(win_path)
+}
+
+#[tauri::command]
+async fn open_directory_in_explorer(path: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        let win_path = format_explorer_path(&path)?;
+
+        #[cfg(windows)]
+        {
+            crate::process::hidden_command("explorer.exe")
+                .arg(&win_path)
+                .spawn()
+                .map(|_| ())
+                .map_err(|error| format!("Cannot open File Explorer: {error}"))
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = win_path;
+            Err("Opening File Explorer is only supported on Windows.".into())
+        }
+    })
+    .await
+    .map_err(|error| format!("File Explorer worker failed: {error}"))?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     diagnostics::install_panic_hook();
@@ -349,24 +389,69 @@ pub fn run() {
             show_window,
             select_directory,
             get_current_dir,
+            open_directory_in_explorer,
         ])
         .build(tauri::generate_context!())
         .map(|app| {
-            let shutting_down = std::sync::atomic::AtomicBool::new(false);
+            let shutting_down = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
             app.run(move |handle, event| {
                 if let tauri::RunEvent::ExitRequested { api, .. } = event {
                     if !shutting_down.swap(true, std::sync::atomic::Ordering::AcqRel) {
                         api.prevent_exit();
                         let handle = handle.clone();
+                        let shutting_down = shutting_down.clone();
                         std::thread::spawn(move || {
-                            if let Err(error) = handle.state::<PtyManager>().shutdown() {
-                                diagnostics::record(&format!("Terminal shutdown: {error}"));
+                            let manager = handle.state::<PtyManager>().inner().clone();
+                            let mut shutdown_error = None;
+                            for attempt in 0..3 {
+                                match manager.shutdown() {
+                                    Ok(()) => {
+                                        handle.exit(0);
+                                        return;
+                                    }
+                                    Err(error) => shutdown_error = Some(error),
+                                }
+                                if attempt < 2 {
+                                    std::thread::sleep(std::time::Duration::from_millis(300));
+                                }
                             }
-                            handle.exit(0);
+                            let error = shutdown_error.unwrap_or_else(|| "Terminal shutdown failed.".into());
+                            diagnostics::record(&format!("Terminal shutdown: {error}"));
+                            manager.cancel_shutdown();
+                            shutting_down.store(false, std::sync::atomic::Ordering::Release);
+                            if let Some(window) = handle.get_webview_window("main") {
+                                let _ = window.show();
+                                use tauri::Emitter;
+                                let _ = window.emit(
+                                    "app-error",
+                                    format!("Vela could not stop every terminal process, so it stayed open. Close the terminal tabs and try again. {error}"),
+                                );
+                            }
                         });
                     }
                 }
             })
         })
         .unwrap_or_else(|error| diagnostics::record(&format!("Unable to start Vela: {error}")));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_explorer_path_normalizes_to_windows_backslashes() {
+        let current = std::env::current_dir().unwrap();
+        let forward_str = current.to_string_lossy().replace('\\', "/");
+        let formatted = format_explorer_path(&forward_str).expect("Valid dir should format");
+        assert!(!formatted.contains('/'), "Formatted path should not have forward slashes: {formatted}");
+        assert!(formatted.contains('\\') || formatted.len() <= 3);
+        assert!(!formatted.ends_with('\\') || formatted.len() <= 3, "Non-root path should not end with backslash: {formatted}");
+    }
+
+    #[test]
+    fn format_explorer_path_rejects_missing_directory() {
+        let result = format_explorer_path("C:/non_existent_folder_xyz_12345");
+        assert!(result.is_err());
+    }
 }

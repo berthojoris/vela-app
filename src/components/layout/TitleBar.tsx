@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Minus, X, GitBranch, FolderGit2 } from 'lucide-react';
 import { tauriIpc } from '../../lib/tauriIpc';
 import { useWorktreeStore } from '../../stores/useWorktreeStore';
+import { useTerminalStore } from '../../stores/useTerminalStore';
 import velaLogo from '../../assets/vela_logo.webp';
 import { useNoticeStore } from '../../stores/useNoticeStore';
 
@@ -29,7 +30,10 @@ export const TitleBar: React.FC = () => {
     try { await tauriIpc.closeWindow(); } catch (error) { useNoticeStore.getState().report('Unable to close window', error); }
   };
 
+  const { sessions, activeSessionId } = useTerminalStore();
   const { repoPath, worktrees, activeWorktreeId, activeSessionCwd } = useWorktreeStore();
+  const activeSession = sessions.find((s) => s.id === activeSessionId);
+  const currentCwd = activeSession?.cwd || activeSessionCwd;
 
   const activeWorktree = worktrees.find((w) => w.id === activeWorktreeId);
 
@@ -67,10 +71,10 @@ export const TitleBar: React.FC = () => {
               </div>
             )}
           </div>
-        ) : activeSessionCwd ? (
+        ) : currentCwd ? (
           <div className="flex items-center gap-1.5 ml-2 pl-3 border-l border-orca-border text-orca-muted">
-            <span className="truncate max-w-[140px] text-orca-muted font-mono" title={activeSessionCwd}>
-              {activeSessionCwd.split('/').pop() || activeSessionCwd}
+            <span className="truncate max-w-[140px] text-orca-muted font-mono" title={currentCwd}>
+              {currentCwd.split('/').pop() || currentCwd}
             </span>
           </div>
         ) : null}

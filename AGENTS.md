@@ -16,12 +16,13 @@
 
 Rust regression/integration tests: `cargo test --locked --lib` from `src-tauri/`. They exercise temporary Git repos and real ConPTY on Windows, with a mocked Tauri runtime. `build.rs` embeds a Common Controls v6 manifest for the test harness too. Windows checks live in `.github/workflows/check.yml`. There is no eslint/prettier/rustfmt/clippy config. Only claim checks actually run, and do not equate passing tests with verified RAM/FPS or zero bugs.
 
-## Definition of done — always build the release `.exe`
+## Definition of done — release build on request only
 
-- **Every task that changes code must end with a release build**: run `npx @tauri-apps/cli build --no-bundle` from the repo root as the final step, after `tsc`/`vite build` and `cargo check` are clean.
-- The output is `src-tauri/target/release/vela.exe`. Confirm the build succeeded and the exe's timestamp was updated before reporting the task done.
+- **Do NOT run release build unless explicitly requested**: Do not run `npx @tauri-apps/cli build --no-bundle` unless the user explicitly asks for a release build in their prompt.
+- For code changes, verification is done via `npm run build` (`tsc && vite build`) / `npm run typecheck` and `cargo check` (or `cargo test`) from `src-tauri/`.
+- **When a release build IS explicitly requested**: Run `npx @tauri-apps/cli build --no-bundle` from the repo root as the final step after checks are clean. The output is `src-tauri/target/release/vela.exe`. Confirm the build succeeded and the exe's timestamp was updated before reporting the task done.
 - If the build fails, fix it (or report the exact error output) — don't hand back a task with a broken release build. If `vela.exe` is locked because the app is running, say so and ask the user to close it rather than killing the process.
-- Docs-only changes (e.g. `*.md`) don't need a rebuild.
+- Docs-only changes (e.g. `*.md`) don't need build checks.
 
 ## Layout
 

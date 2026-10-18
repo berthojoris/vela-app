@@ -143,7 +143,7 @@ impl GitManager {
             }
         }
     }
-    pub fn list_worktrees(repo_path: &str) -> Result<Vec<GitWorktree>, String> {
+    pub fn list_worktrees(repo_path: &str, check_status: bool) -> Result<Vec<GitWorktree>, String> {
         let path = Self::directory(repo_path)?;
         let result = Self::checked(Self::run(
             Self::git_cmd().args(["-C", &path, "worktree", "list", "--porcelain", "-z"]),
@@ -153,7 +153,7 @@ impl GitManager {
         let mut worktrees = Vec::new();
         let mut current: Option<(String, String)> = None;
         let mut append = |path: String, branch: String| -> Result<(), String> {
-            let count = if Path::new(&path).is_dir() {
+            let count = if check_status && Path::new(&path).is_dir() {
                 Self::status(&path)?.len()
             } else {
                 0
@@ -304,7 +304,7 @@ impl GitManager {
         let repo = Self::directory(repo_path)?;
         let path = Self::directory(worktree_path)?;
         let _operation = Mutation::begin(&repo)?;
-        let worktrees = Self::list_worktrees(&repo)?;
+        let worktrees = Self::list_worktrees(&repo, false)?;
         let target = worktrees
             .iter()
             .find(|worktree| Self::normalize_path(&worktree.path).eq_ignore_ascii_case(&path))
@@ -719,7 +719,7 @@ mod tests {
         std::fs::write(scratch.0.join("repo/first.txt"), "original\n").unwrap();
         GitManager::commit_worktree(&path, "initial").unwrap();
         let worktree = GitManager::create_worktree(&path, "feat/test", None).unwrap();
-        assert_eq!(GitManager::list_worktrees(&path).unwrap().len(), 2);
+        assert_eq!(GitManager::list_worktrees(&path, true).unwrap().len(), 2);
         std::fs::write(Path::new(&worktree.path).join("first.txt"), "updated\n").unwrap();
         std::fs::write(
             Path::new(&worktree.path).join("日本 file.txt"),
@@ -741,7 +741,9 @@ mod tests {
             .is_empty());
         assert!(GitManager::get_worktree_diff(&path).unwrap().is_empty());
         GitManager::remove_worktree(&path, &worktree.path, false).unwrap();
-        assert_eq!(GitManager::list_worktrees(&path).unwrap().len(), 1);
+        assert_eq!(GitManager::list_worktrees(&path, true).unwrap().len(), 1);
+        assert_eq!(GitManager::list_worktrees(&path, false).unwrap().len(), 1);
+        assert_eq!(GitManager::list_worktrees(&path, false).unwrap()[0].dirty_files_count, 0);
         assert!(GitManager::create_worktree(&path, "--invalid", None).is_err());
         assert!(GitManager::remove_worktree(&path, &path, false).is_err());
 

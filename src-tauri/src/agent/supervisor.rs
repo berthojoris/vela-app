@@ -17,6 +17,8 @@ impl AgentSupervisor {
             (AgentType::Aider, "Aider AI Pair Programmer", "aider"),
             (AgentType::Codex, "Codex CLI", "codex"),
             (AgentType::OpenCode, "OpenCode", "opencode"),
+            (AgentType::DroidCli, "Droid CLI", "droid"),
+            (AgentType::Antigravity, "Antigravity", "agy"),
         ];
 
         let mut detected = Vec::new();
@@ -45,38 +47,68 @@ impl AgentSupervisor {
     pub fn get_shell_profiles() -> Vec<ShellProfile> {
         let mut profiles = Vec::new();
 
-        // 1. PowerShell 7 (pwsh) or Windows PowerShell
-        if Self::check_binary_exists("pwsh.exe") {
-            profiles.push(ShellProfile {
-                id: "pwsh".to_string(),
-                name: "PowerShell 7".to_string(),
-                executable: "pwsh.exe".to_string(),
-                args: vec![
-                    "-NoLogo".to_string(),
-                    "-NoExit".to_string(),
-                    "-Command".to_string(),
-                    "Set-Alias -Name oc -Value opencode".to_string(),
-                ],
-                is_agent: false,
-                agent_type: None,
-            });
+        let (pwsh_id, pwsh_name, pwsh_bin) = if Self::check_binary_exists("pwsh.exe") {
+            ("pwsh", "PowerShell 7", "pwsh.exe")
         } else {
-            profiles.push(ShellProfile {
-                id: "powershell".to_string(),
-                name: "Windows PowerShell".to_string(),
-                executable: "powershell.exe".to_string(),
-                args: vec![
-                    "-NoLogo".to_string(),
-                    "-NoExit".to_string(),
-                    "-Command".to_string(),
-                    "Set-Alias -Name oc -Value opencode".to_string(),
-                ],
-                is_agent: false,
-                agent_type: None,
-            });
-        }
+            ("powershell", "Windows PowerShell", "powershell.exe")
+        };
 
-        // 2. Command Prompt
+        // 1. OpenCode agent profile: opens PowerShell terminal running `opencode`
+        profiles.push(ShellProfile {
+            id: "agent-opencode".to_string(),
+            name: "OpenCode".to_string(),
+            executable: pwsh_bin.to_string(),
+            args: vec![
+                "-NoLogo".to_string(),
+                "-NoExit".to_string(),
+                "-Command".to_string(),
+                "opencode".to_string(),
+            ],
+            is_agent: true,
+            agent_type: Some(AgentType::OpenCode),
+        });
+
+        // 2. Droid CLI agent profile: opens PowerShell terminal running `droid`
+        profiles.push(ShellProfile {
+            id: "agent-droid".to_string(),
+            name: "Droid CLI".to_string(),
+            executable: pwsh_bin.to_string(),
+            args: vec![
+                "-NoLogo".to_string(),
+                "-NoExit".to_string(),
+                "-Command".to_string(),
+                "droid".to_string(),
+            ],
+            is_agent: true,
+            agent_type: Some(AgentType::DroidCli),
+        });
+
+        // 3. Antigravity agent profile: opens PowerShell terminal running `agy`
+        profiles.push(ShellProfile {
+            id: "agent-antigravity".to_string(),
+            name: "Antigravity".to_string(),
+            executable: pwsh_bin.to_string(),
+            args: vec![
+                "-NoLogo".to_string(),
+                "-NoExit".to_string(),
+                "-Command".to_string(),
+                "agy".to_string(),
+            ],
+            is_agent: true,
+            agent_type: Some(AgentType::Antigravity),
+        });
+
+        // 4. PowerShell 7 (pwsh) or Windows PowerShell
+        profiles.push(ShellProfile {
+            id: pwsh_id.to_string(),
+            name: pwsh_name.to_string(),
+            executable: pwsh_bin.to_string(),
+            args: vec!["-NoLogo".to_string()],
+            is_agent: false,
+            agent_type: None,
+        });
+
+        // 5. Command Prompt
         profiles.push(ShellProfile {
             id: "cmd".to_string(),
             name: "Command Prompt".to_string(),
@@ -86,7 +118,7 @@ impl AgentSupervisor {
             agent_type: None,
         });
 
-        // 3. Git Bash (if found in standard locations)
+        // 6. Git Bash (if found in standard locations)
         let git_bash_paths = [
             "C:\\Program Files\\Git\\bin\\bash.exe",
             "C:\\Program Files (x86)\\Git\\bin\\bash.exe",
@@ -105,7 +137,7 @@ impl AgentSupervisor {
             }
         }
 
-        // 4. WSL
+        // 7. WSL
         if Self::check_binary_exists("wsl.exe") {
             profiles.push(ShellProfile {
                 id: "wsl".to_string(),
@@ -117,7 +149,7 @@ impl AgentSupervisor {
             });
         }
 
-        // 5. AI Coding Agent Profiles
+        // 8. Other detected AI Coding Agent Profiles
         if Self::check_binary_exists("claude") {
             profiles.push(ShellProfile {
                 id: "agent-claude".to_string(),
@@ -153,12 +185,6 @@ impl AgentSupervisor {
 
         for (id, name, executable, agent_type) in [
             ("agent-codex", "Codex CLI", "codex", AgentType::Codex),
-            (
-                "agent-opencode",
-                "OpenCode",
-                "opencode",
-                AgentType::OpenCode,
-            ),
         ] {
             if Self::check_binary_exists(executable) {
                 profiles.push(ShellProfile {
@@ -171,7 +197,9 @@ impl AgentSupervisor {
                 });
             }
         }
+
         profiles
+
     }
 
     /// Pure in-process binary lookup via PATH without spawning where.exe/cmd.exe

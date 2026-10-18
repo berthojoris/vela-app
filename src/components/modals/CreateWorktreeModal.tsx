@@ -5,6 +5,7 @@ import { useTerminalStore } from '../../stores/useTerminalStore';
 import { errorMessage } from '../../lib/errors';
 import { useDialog } from '../../lib/useDialog';
 import { GitWorktree } from '../../types';
+import { formatTabTitle } from '../../lib/shellIntegration';
 
 export const CreateWorktreeModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpen, onClose }) => {
   const [branchName, setBranchName] = useState('');
@@ -37,7 +38,7 @@ export const CreateWorktreeModal: React.FC<{ isOpen: boolean; onClose: () => voi
         worktree = await createWorktree(branchName.trim(), baseBranch.trim() || undefined);
         setCreated(worktree);
       }
-      await createSession({ title: `${profile.name} (${worktree.branch})`, shell: profile.executable, args: profile.args, cwd: worktree.path, worktreeId: worktree.id, isAgent: profile.is_agent, agentType: profile.agent_type });
+      await createSession({ title: formatTabTitle(profile.name, worktree.branch), shell: profile.executable, args: profile.args, cwd: worktree.path, worktreeId: worktree.id, isAgent: profile.is_agent, agentType: profile.agent_type });
       launchedRef.current = true;
       onClose();
     } catch (error) {

@@ -159,9 +159,11 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive }) => 
       return true;
     });
 
-    // Image-only clipboard: the browser paste carries no text, so nothing would
-    // reach the PTY. Send Alt+V (ESC v) instead so CLI agents like Claude Code
-    // read the image from the Windows clipboard themselves.
+    // An image-only clipboard carries no text, so a normal paste would send
+    // nothing to the PTY and the image would be lost. Forward the raw Ctrl+V
+    // key instead: agents that read the Windows clipboard themselves (OpenCode
+    // binds `prompt.paste` to ctrl+v, and Claude Code pastes images the same
+    // way) then attach the image from the OS clipboard.
     const container = containerRef.current;
     const handlePaste = (e: ClipboardEvent) => {
       const data = e.clipboardData;
@@ -169,10 +171,13 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive }) => 
       const hasImage = Array.from(data.items).some(
         (item) => item.kind === 'file' && item.type.startsWith('image/')
       );
-      if (!hasImage) return;
+      // Empty pastes (image-only clipboard exposed without a file item, or a
+      // terminal-style paste of an unsupported payload) reach here the same
+      // way, and the agent still needs the key to read the clipboard itself.
+      if (!hasImage && data.items.length > 0) return;
       e.preventDefault();
       e.stopPropagation();
-      void sendInput('\x1bv');
+      void sendInput('\x16');
     };
     container.addEventListener('paste', handlePaste, true);
 

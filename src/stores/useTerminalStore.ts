@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { AgentType, ShellProfile, TerminalSession } from '../types';
 import { tauriIpc } from '../lib/tauriIpc';
 import { useNoticeStore } from './useNoticeStore';
+import { formatTabTitle } from '../lib/shellIntegration';
 
 interface TerminalState {
   sessions: TerminalSession[];
@@ -46,7 +47,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   secondarySessionId: null,
   splitMode: 'none',
   profiles: [],
-  defaultProfileId: 'pwsh',
+  defaultProfileId: 'agent-opencode',
   createSession: async (params = {}) => {
     if (get().sessions.length + pendingLaunches >= 32) throw new Error('The 32 tab limit has been reached. Close an unused tab first.');
     ++pendingLaunches;
@@ -69,7 +70,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     const id = `term-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
     const title =
       params.title ||
-      (isAgent ? shellProfile?.name || 'AI Agent' : shellProfile?.name || 'Terminal');
+      (isAgent ? shellProfile?.name || 'AI Agent' : formatTabTitle(shellProfile?.name || 'Terminal'));
 
     const cwd = params.cwd || '';
 
@@ -177,7 +178,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       const profiles = await tauriIpc.getShellProfiles();
       set({
         profiles,
-        defaultProfileId: profiles[0]?.id || 'pwsh',
+        defaultProfileId: profiles[0]?.id || 'agent-opencode',
       });
     } catch (e) {
       useNoticeStore.getState().report('Unable to load shell profiles. You can retry from the terminal dialog', e);

@@ -17,3 +17,17 @@ export function cwdFromOsc7(data: string): string | null {
     return path.length > 3 ? path.replace(/\/+$/, '') : path;
   } catch { return null; }
 }
+
+/** Simplifies shell profile display names (e.g. "Windows PowerShell" -> "PowerShell"). */
+export function getFriendlyShellName(name: string): string {
+  if (/windows\s+powershell/i.test(name)) return 'PowerShell';
+  if (/powershell\s+7/i.test(name)) return 'PowerShell';
+  if (/wsl\s*\(.*\)/i.test(name)) return 'WSL';
+  return name;
+}
+
+/** Formats a consistent tab title: shell name with optional branch/folder context. */
+export function formatTabTitle(profileName: string, branchOrFolder?: string | null): string {
+  const shell = getFriendlyShellName(profileName);
+  return branchOrFolder ? `${shell} (${branchOrFolder})` : shell;
+}

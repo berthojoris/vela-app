@@ -4,6 +4,8 @@ export type AgentType =
   | 'aider'
   | 'codex'
   | 'open_code'
+  | 'droid_cli'
+  | 'antigravity'
   | { custom: string };
 
 export type AgentStatus =

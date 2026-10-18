@@ -6,6 +6,7 @@ import { useTerminalStore } from '../../stores/useTerminalStore';
 import { useWorktreeStore } from '../../stores/useWorktreeStore';
 import { useNoticeStore } from '../../stores/useNoticeStore';
 import { ShellProfile } from '../../types';
+import { formatTabTitle } from '../../lib/shellIntegration';
 
 interface NewTabDropdownProps {
   onOpenTerminalModal: () => void;
@@ -48,10 +49,11 @@ export const NewTabDropdown: React.FC<NewTabDropdownProps> = ({ onOpenTerminalMo
     if (launchRef.current) return;
     launchRef.current = true;
     setLaunching(true);
+    const title = formatTabTitle(profile.name, activeWorktree?.branch);
     void createSession({
       shell: profile.executable,
       args: profile.args,
-      title: profile.name,
+      title,
       cwd: defaultCwd,
       worktreeId: activeWorktree?.id,
       isAgent: profile.is_agent,

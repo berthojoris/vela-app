@@ -18,7 +18,7 @@ export const App: React.FC = () => {
   const [isOpenTerminalModalOpen, setIsOpenTerminalModalOpen] = useState(false);
   const [modalInitialProfileId, setModalInitialProfileId] = useState<string | undefined>(undefined);
   const { fetchProfiles, sessions, activeSessionId } = useTerminalStore();
-  const { initRepo, syncWithSession, refreshWorktrees } = useWorktreeStore();
+  const { initRepo, syncWithSession, refreshWorktrees, autoGitStatus } = useWorktreeStore();
 
   const handleOpenTerminalModal = (profileId?: string) => {
     setModalInitialProfileId(profileId);
@@ -61,17 +61,17 @@ export const App: React.FC = () => {
     }
   }, [activeSessionId, sessions.length, sessions.find((s) => s.id === activeSessionId)?.cwd]);
 
-  // Auto-refresh worktrees periodically and on window focus (paused while modals are open)
+  // Auto-refresh worktrees periodically and on window focus (paused while modals are open or autoGitStatus is OFF)
   useEffect(() => {
     const handleFocus = () => {
-      if (!isOpenTerminalModalOpen && !isCreateWorktreeOpen) {
+      if (!isOpenTerminalModalOpen && !isCreateWorktreeOpen && autoGitStatus) {
         refreshWorktrees(true);
       }
     };
     window.addEventListener('focus', handleFocus);
 
     const interval = setInterval(() => {
-      if (!document.hidden && !isOpenTerminalModalOpen && !isCreateWorktreeOpen) {
+      if (!document.hidden && !isOpenTerminalModalOpen && !isCreateWorktreeOpen && autoGitStatus) {
         refreshWorktrees(true);
       }
     }, 10000);
@@ -80,7 +80,7 @@ export const App: React.FC = () => {
       window.removeEventListener('focus', handleFocus);
       clearInterval(interval);
     };
-  }, [isOpenTerminalModalOpen, isCreateWorktreeOpen]);
+  }, [isOpenTerminalModalOpen, isCreateWorktreeOpen, autoGitStatus]);
 
   return (
     <div className="h-screen w-screen flex flex-col bg-orca-darkest text-orca-text overflow-hidden select-none font-sans relative">

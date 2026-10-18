@@ -139,6 +139,64 @@ export const AiderIcon: React.FC<{ className?: string }> = ({ className = 'w-3.5
 );
 
 /**
+ * OpenCode CLI icon (official brand identity mark)
+ */
+export const OpenCodeIcon: React.FC<{ className?: string }> = ({ className = 'w-3.5 h-3.5' }) => (
+  <svg
+    viewBox="0 0 240 300"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={`${className} shrink-0`}
+  >
+    <path fillRule="evenodd" clipRule="evenodd" d="M180 60H60V240H180V60ZM240 300H0V0H240V300Z" fill="#38BDF8" />
+    <path d="M180 240H60V120H180V240Z" fill="#0284C7" />
+  </svg>
+);
+
+/** Droid CLI robot mark */
+export const DroidIcon: React.FC<{ className?: string }> = ({ className = 'w-3.5 h-3.5' }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={`${className} shrink-0`}
+    aria-hidden="true"
+  >
+    <path d="M7 8 5.5 5.5M17 8l1.5-2.5" stroke="#5ED27A" strokeWidth="1.6" strokeLinecap="round" />
+    <path d="M5 11a7 7 0 0 1 14 0v5H5v-5Z" fill="#5ED27A" />
+    <path d="M7 16v3m10-3v3M3.5 11v5m17-5v5" stroke="#5ED27A" strokeWidth="1.8" strokeLinecap="round" />
+    <circle cx="9" cy="11.5" r="1" fill="#102418" />
+    <circle cx="15" cy="11.5" r="1" fill="#102418" />
+  </svg>
+);
+
+/**
+ * Google Antigravity CLI (agy) icon
+ */
+export const AntigravityIcon: React.FC<{ className?: string }> = ({ className = 'w-3.5 h-3.5' }) => (
+  <svg
+    viewBox="0 0 16 15"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={`${className} shrink-0`}
+    aria-hidden="true"
+  >
+    <defs>
+      <linearGradient id="antigravity-grad" x1="0" y1="15" x2="16" y2="0" gradientUnits="userSpaceOnUse">
+        <stop offset="0%" stopColor="#3186FF" />
+        <stop offset="35%" stopColor="#00B95C" />
+        <stop offset="70%" stopColor="#FFE432" />
+        <stop offset="100%" stopColor="#FC413D" />
+      </linearGradient>
+    </defs>
+    <path
+      d="M14.0777 13.984C14.945 14.6345 16.2458 14.2008 15.0533 13.0084C11.476 9.53949 12.2349 0 7.79033 0C3.34579 0 4.10461 9.53949 0.527295 13.0084C-0.773543 14.3092 0.635692 14.6345 1.50293 13.984C4.86344 11.7076 4.64663 7.69664 7.79033 7.69664C10.934 7.69664 10.7172 11.7076 14.0777 13.984Z"
+      fill="url(#antigravity-grad)"
+    />
+  </svg>
+);
+
+/**
  * Helper to identify shell/agent type
  */
 export function detectTerminalType(params: {
@@ -146,17 +204,47 @@ export function detectTerminalType(params: {
   title?: string;
   isAgent?: boolean;
   agentType?: AgentType | null;
-}): 'git-bash' | 'powershell' | 'cmd' | 'wsl' | 'claude' | 'gemini' | 'aider' | 'agent' | 'terminal' {
+}): 'git-bash' | 'powershell' | 'cmd' | 'wsl' | 'claude' | 'gemini' | 'aider' | 'opencode' | 'droid' | 'antigravity' | 'agent' | 'terminal' {
   const isAgent = params.isAgent;
   const agentType = typeof params.agentType === 'string' ? params.agentType.toLowerCase() : params.agentType?.custom.toLowerCase() || '';
   const shell = params.shell?.toLowerCase() || '';
   const title = params.title?.toLowerCase() || '';
 
+  if (agentType.includes('droid') || title.includes('droid') || shell.includes('droid')) return 'droid';
+
+  if (
+    agentType.includes('antigravity') ||
+    agentType.includes('agy') ||
+    title.includes('antigravity') ||
+    title.includes('agy') ||
+    shell.includes('antigravity') ||
+    shell.includes('agy')
+  ) {
+    return 'antigravity';
+  }
+
   if (isAgent || agentType) {
     if (agentType.includes('claude') || title.includes('claude') || shell.includes('claude')) return 'claude';
     if (agentType.includes('gemini') || title.includes('gemini') || shell.includes('gemini')) return 'gemini';
     if (agentType.includes('aider') || title.includes('aider') || shell.includes('aider')) return 'aider';
+    if (
+      agentType.includes('opencode') ||
+      agentType.includes('open_code') ||
+      title.includes('opencode') ||
+      title.includes('open code')
+    ) {
+      return 'opencode';
+    }
     return 'agent';
+  }
+
+  // OpenCode detection (title or command)
+  if (
+    title.includes('opencode') ||
+    title.includes('open code') ||
+    shell.includes('opencode')
+  ) {
+    return 'opencode';
   }
 
   // Git Bash detection (matches executable, path, or title)
@@ -230,6 +318,12 @@ export const TerminalIcon: React.FC<TerminalIconProps> = ({
       return <GeminiIcon className={className} />;
     case 'aider':
       return <AiderIcon className={className} />;
+    case 'opencode':
+      return <OpenCodeIcon className={className} />;
+    case 'droid':
+      return <DroidIcon className={className} />;
+    case 'antigravity':
+      return <AntigravityIcon className={className} />;
     case 'agent':
       return <Bot className={`${className} text-orca-emerald shrink-0`} />;
     case 'terminal':

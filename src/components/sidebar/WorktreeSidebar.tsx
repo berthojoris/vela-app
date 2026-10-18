@@ -20,6 +20,8 @@ import { TerminalIcon } from '../terminal/TerminalIcon';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { errorMessage } from '../../lib/errors';
 import { useNoticeStore } from '../../stores/useNoticeStore';
+import { tauriIpc } from '../../lib/tauriIpc';
+import { formatTabTitle } from '../../lib/shellIntegration';
 
 interface WorktreeSidebarProps {
   onOpenCreateModal: () => void;
@@ -30,6 +32,7 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
   const [removal, setRemoval] = useState<{ path: string; branch: string; repo: string | null } | null>(null);
   const [removeError, setRemoveError] = useState<string | null>(null);
   const [removing, setRemoving] = useState(false);
+  const [openingDirectory, setOpeningDirectory] = useState(false);
   const removingRef = useRef(false);
   const launching = useRef(new Set<string>());
 
@@ -41,16 +44,31 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
     isLoading,
     isMutating,
     error,
+    autoGitStatus,
+    toggleAutoGitStatus,
     refreshWorktrees,
     removeWorktree,
     selectWorktree,
     clearError,
   } = useWorktreeStore();
 
-  const { sessions, activeSessionId, createSession, setActiveSession, profiles } = useTerminalStore();
+  const { sessions, activeSessionId, createSession, setActiveSession, profiles, defaultProfileId } = useTerminalStore();
   const { openDiffModal } = useDiffStore();
 
   const activeSession = sessions.find((s) => s.id === activeSessionId);
+  const currentCwd = activeSession?.cwd || activeSessionCwd;
+
+  const handleOpenDirectory = async () => {
+    if (!currentCwd || openingDirectory) return;
+    setOpeningDirectory(true);
+    try {
+      await tauriIpc.openDirectoryInExplorer(currentCwd);
+    } catch (error) {
+      useNoticeStore.getState().report('Unable to open the active directory', error);
+    } finally {
+      setOpeningDirectory(false);
+    }
+  };
 
   const handleSelectWorktreeCard = (wt: { id: string; path: string }) => {
     selectWorktree(wt.id);
@@ -78,10 +96,16 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
 
     if (launching.current.has(worktreeId)) return;
     launching.current.add(worktreeId);
+    const profile = profiles.find((p) => p.id === defaultProfileId) || profiles[0];
+    const title = formatTabTitle(profile?.name || 'PowerShell', branch);
     void createSession({
-      title: branch,
+      title,
+      shell: profile?.executable,
+      args: profile?.args,
       cwd: path,
       worktreeId,
+      isAgent: profile?.is_agent,
+      agentType: profile?.agent_type,
     }).catch((error) => useNoticeStore.getState().report('Unable to open terminal in worktree', error))
       .finally(() => launching.current.delete(worktreeId));
   };
@@ -112,6 +136,18 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
         >
           <ChevronRight className="w-4 h-4" />
         </button>
+        {currentCwd && (
+          <button
+            type="button"
+            onClick={() => { void handleOpenDirectory(); }}
+            disabled={openingDirectory}
+            className="p-1.5 rounded hover:bg-orca-hover text-orca-muted hover:text-white transition-colors disabled:opacity-50 cursor-pointer"
+            title={`Open active directory in File Explorer: ${currentCwd}`}
+            aria-label="Open active directory in File Explorer"
+          >
+            <FolderOpen className="w-4 h-4" />
+          </button>
+        )}
         {repoPath && (
           <button
             onClick={onOpenCreateModal}
@@ -139,12 +175,50 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
           )}
         </div>
 
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1.5">
+          {/* Switch ON/OFF for Git Status Auto-Reload */}
           <button
-            onClick={() => refreshWorktrees()}
+            type="button"
+            role="switch"
+            aria-checked={autoGitStatus}
+            onClick={toggleAutoGitStatus}
+            className={`h-5 px-1.5 rounded flex items-center gap-1 border transition-all cursor-pointer select-none text-[10px] ${
+              autoGitStatus
+                ? 'bg-orca-accent/15 border-orca-accent/40 text-orca-accent hover:bg-orca-accent/25'
+                : 'bg-orca-darkest/70 border-orca-border text-orca-muted hover:text-white hover:border-orca-borderLight'
+            }`}
+            title={
+              autoGitStatus
+                ? 'Git Status Check: ON (Status git diperiksa otomatis saat berpindah tab & periodik)'
+                : 'Git Status Check: OFF (Pemeriksaan git status nonaktif agar berpindah tab lebih cepat. Klik untuk mengaktifkan)'
+            }
+          >
+            <span className="text-[9px] font-sans font-medium text-orca-muted">Git</span>
+            <span
+              className={`w-4.5 h-2.5 rounded-full flex items-center px-0.5 transition-colors ${
+                autoGitStatus ? 'bg-orca-accent justify-end' : 'bg-orca-border justify-start'
+              }`}
+            >
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${
+                  autoGitStatus ? 'bg-white' : 'bg-orca-muted'
+                }`}
+              />
+            </span>
+            <span
+              className={`text-[9px] font-mono font-bold ${
+                autoGitStatus ? 'text-orca-accent' : 'text-orca-muted'
+              }`}
+            >
+              {autoGitStatus ? 'ON' : 'OFF'}
+            </span>
+          </button>
+
+          <button
+            onClick={() => refreshWorktrees(false, true)}
             disabled={isLoading || isMutating || !repoPath}
             className="p-1 rounded hover:bg-orca-hover text-orca-muted hover:text-white transition-colors disabled:opacity-40 cursor-pointer"
-            title="Refresh Worktrees"
+            title="Refresh Worktrees (Manual Check)"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
           </button>
@@ -178,9 +252,9 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
               <FolderOpen className="w-3.5 h-3.5 text-orca-muted shrink-0" />
               <span
                 className="truncate font-mono text-[11px] text-orca-muted"
-                title={activeSessionCwd || 'No Directory'}
+                title={currentCwd || 'No Directory'}
               >
-                {activeSessionCwd ? activeSessionCwd.split('/').pop() || activeSessionCwd : 'No Directory'}
+                {currentCwd ? currentCwd.split('/').pop() || currentCwd : 'No Directory'}
               </span>
             </div>
             <span className="text-[9px] font-mono text-orca-muted bg-orca-card px-1 rounded shrink-0 border border-orca-border">
@@ -261,11 +335,16 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
                       </span>
 
                       {wt.dirty_files_count > 0 ? (
-                        <span className="text-orca-amber bg-orca-amber/10 px-1 rounded">
+                        <span className="text-orca-amber bg-orca-amber/10 px-1 rounded font-medium">
                           {wt.dirty_files_count} dirty
                         </span>
                       ) : (
-                        <span className="text-orca-muted">clean</span>
+                        <span
+                          className="text-orca-muted"
+                          title={!autoGitStatus ? 'Git Auto Check: OFF (Klik ↻ Refresh untuk cek status terbaru)' : undefined}
+                        >
+                          clean
+                        </span>
                       )}
                     </div>
 
@@ -342,9 +421,22 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
         </div>
       </div>
 
-      {/* Footer: Create Worktree Button */}
-      {repoPath && (
-        <div className="p-2 border-t border-orca-border">
+      {/* Footer actions */}
+      {(currentCwd || repoPath) && (
+        <div className="p-2 border-t border-orca-border space-y-1.5">
+          {currentCwd && (
+            <button
+              type="button"
+              onClick={() => { void handleOpenDirectory(); }}
+              disabled={openingDirectory}
+              className="w-full h-7 rounded border border-orca-border bg-orca-darkest/70 hover:bg-orca-hover text-orca-text hover:text-white flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50 cursor-pointer"
+              title={`Open active directory in File Explorer: ${currentCwd}`}
+            >
+              <FolderOpen className="w-3.5 h-3.5" />
+              <span>{openingDirectory ? 'Opening…' : 'Open Dir'}</span>
+            </button>
+          )}
+          {repoPath && (
           <button
             onClick={onOpenCreateModal}
             disabled={isMutating || isLoading}
@@ -353,6 +445,7 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
             <Plus className="w-3.5 h-3.5" />
             <span>New Worktree (Agent)</span>
           </button>
+          )}
         </div>
       )}
     </aside>
