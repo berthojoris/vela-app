@@ -2,7 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { deferred, file } from '../test/helpers';
 import { FileDiff } from '../types';
 
-const ipc = vi.hoisted(() => ({ getWorktreeDiff: vi.fn(), commitWorktree: vi.fn() }));
+const ipc = vi.hoisted(() => ({
+  getWorktreeDiff: vi.fn(),
+  commitWorktree: vi.fn(),
+  rollbackWorktreeFile: vi.fn(),
+  resetWorktree: vi.fn(),
+}));
 vi.mock('../lib/tauriIpc', () => ({ tauriIpc: ipc }));
 import { useDiffStore as store } from './useDiffStore';
 
@@ -11,6 +16,8 @@ beforeEach(() => {
   store.getState().closeDiffModal();
   ipc.getWorktreeDiff.mockReset();
   ipc.commitWorktree.mockReset();
+  ipc.rollbackWorktreeFile.mockReset();
+  ipc.resetWorktree.mockReset();
 });
 
 describe('diff target isolation', () => {
@@ -83,5 +90,47 @@ describe('commit lifecycle', () => {
     await expect(store.getState().commit()).rejects.toThrow('Git user identity');
     expect(store.getState().isCommitting).toBe(false);
     expect(store.getState().commitMessage).toBe('fix: reviewed change');
+  });
+});
+
+describe('rollback and reset lifecycle', () => {
+  beforeEach(async () => {
+    ipc.getWorktreeDiff.mockResolvedValue([file('A.ts'), file('B.ts')]);
+    await store.getState().openDiffModal('C:/A');
+  });
+
+  it('rolls back a single file and refreshes diffs', async () => {
+    ipc.rollbackWorktreeFile.mockResolvedValue(undefined);
+    ipc.getWorktreeDiff.mockResolvedValueOnce([file('B.ts')]);
+    await store.getState().rollbackFile('A.ts');
+    expect(ipc.rollbackWorktreeFile).toHaveBeenCalledWith('C:/A', 'A.ts');
+    expect(store.getState().diffs.length).toBe(1);
+    expect(store.getState().diffs[0].path).toBe('B.ts');
+  });
+
+  it('resets all changes and refreshes diffs', async () => {
+    ipc.resetWorktree.mockResolvedValue(undefined);
+    ipc.getWorktreeDiff.mockResolvedValueOnce([]);
+    await store.getState().resetAll();
+    expect(ipc.resetWorktree).toHaveBeenCalledWith('C:/A');
+    expect(store.getState().diffs).toEqual([]);
+    expect(store.getState().selectedFile).toBeNull();
+  });
+
+  it('rejects concurrent rollback operations', async () => {
+    const pending = deferred<void>();
+    ipc.rollbackWorktreeFile.mockReturnValue(pending.promise);
+    const rollback = store.getState().rollbackFile('A.ts');
+    await expect(store.getState().rollbackFile('B.ts')).rejects.toThrow('already in progress');
+    await expect(store.getState().resetAll()).rejects.toThrow('already in progress');
+    pending.resolve();
+    await rollback;
+  });
+
+  it('sets rollbackError on rollback failure', async () => {
+    ipc.rollbackWorktreeFile.mockRejectedValue('file locked by process');
+    await expect(store.getState().rollbackFile('A.ts')).rejects.toThrow('file locked by process');
+    expect(store.getState().isRollingBack).toBe(false);
+    expect(store.getState().rollbackError).toContain('file locked by process');
   });
 });

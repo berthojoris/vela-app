@@ -1,646 +1,358 @@
 # Product Requirements Document (PRD)
 
-# Remote Agent Companion — Android ↔ Rust/Tauri 2 Desktop
+# Remote Agent Companion — Android ↔ Rust/Tauri 2 Desktop (with Laravel Reverb Relay)
 
 | Field | Value |
 |---|---|
-| Document version | 1.0 |
-| Status | Draft — Ready for Technical Review |
-| Date | 2026-10-16 |
-| Target platforms | Windows desktop (Rust + Tauri 2), Android (Kotlin + Jetpack Compose), cloud relay (Rust) |
-| Feature | Keep agents moving from anywhere |
-| Product approach | Local-first agent execution; secure remote control via relay |
+| Document version | 2.0 (Updated with Laravel Reverb Backend Architecture) |
+| Status | Approved Architecture & Implementation Blueprint |
+| Date | 2026-10-18 |
+| Target platforms | Windows desktop (Rust + Tauri 2), Android (Kotlin + Jetpack Compose), Cloud Relay & Backend (Laravel 11/12 + Laravel Reverb) |
+| Feature | Keep AI coding agents moving from anywhere |
+| Product approach | Local-first agent execution; zero-knowledge secure remote control via Laravel Reverb |
 
-> **Purpose:** Enable users to securely monitor and control AI coding agents running on their PC from an Android phone over the internet, even when the phone and PC are on different networks. The PC remains responsible for running all agents; a VPS routes encrypted traffic and does not execute agents.
+> **Purpose:** Memberikan kemampuan kepada developer untuk memantau dan mengontrol AI coding agents (Claude Code, Gemini CLI, Aider, Codex, OpenCode) yang berjalan di PC Windows (Vela Desktop) melalui smartphone Android secara aman melalui internet dari jaringan mana pun (termasuk seluler di balik CGNAT). PC tetap menjadi satu-satunya eksekutor agent; backend terpisah berbasis **Laravel + Laravel Reverb** bertindak sebagai relay data terenkripsi (Zero-Knowledge) dan penyedia layanan presence, autentikasi device, serta notifikasi push FCM.
 
 ---
 
-## 1. Executive Summary
+## 1. Executive Summary & Vision
 
-The Remote Agent Companion extends the existing Rust + Tauri 2 desktop application with an Android companion application. A user can pair an Android device with one or more PCs using a QR code, view active sessions, stream agent output, send follow-up prompts, approve or reject agent requests, interrupt tasks, and receive notifications about important agent events.
-
-The experience must work remotely through mobile data or any Wi-Fi network without exposing a desktop inbound port to the public internet. Both desktop and Android establish outbound secure WebSocket (WSS) connections to a Rust cloud relay. The relay handles device/host routing and presence, while an authenticated end-to-end encrypted (E2EE) channel protects agent content from the relay.
-
-### 1.1 Problem
-
-- Users must currently remain at their PC to follow agent progress or respond to prompts/approvals.
-- Long-running coding agents may stall while waiting for input.
-- Remote desktop applications are cumbersome and provide overly broad access.
-- Mobile and desktop are frequently on different networks, often behind NAT/CGNAT.
-
-### 1.2 Product Vision
-
+### 1.1 Product Vision
 **Continue agent workflows from anywhere, without remotely exposing the entire computer.**
+Developer sering kali harus meninggalkan meja kerja saat AI agent sedang menjalankan task panjang (refactoring, run tests, coding). Ketika agent membutuhkan persetujuan (*approval*) atau prompt tindak lanjut, proses akan terhenti (*stalled*). Remote Agent Companion menyelesaikan masalah ini dengan menghubungkan aplikasi mobile Android ke PC lokal melalui Cloud Relay terpisah berbasis Laravel Reverb, dengan enkripsi end-to-end (E2EE) penuh.
 
-### 1.3 Goals
-
-1. Enable secure remote connectivity across different networks.
-2. Pair Android and desktop using an understandable, revocable device authorization flow.
-3. Provide real-time visibility into PC agent/session states.
-4. Allow scoped, authorized remote commands without spawning duplicate agent sessions.
-5. Maintain agent execution through Android disconnects.
-6. Support reliable resync, error handling, and notifications.
-7. Preserve a clear path from Tauri-embedded host to a headless Rust host service.
-
-### 1.4 Non-goals (Initial Release)
-
-- Running AI models or coding-agent CLIs on Android or the relay.
-- Remote desktop/screen capture or unrestricted file-system browsing.
-- Sharing a host across multiple user accounts or multi-tenant billing.
-- General-purpose SSH access or arbitrary shell execution by default.
-- Replacing the existing desktop app's session/runtime management.
-- Supporting iOS in the first release.
-- Zero-downtime host execution while the PC is powered off, sleeping, or disconnected.
+### 1.2 Core Architecture Decisions
+1. **Pemisahan 3 Komponen Sistem (Tri-Partite System):**
+   - **Host (Vela Desktop - Rust + Tauri 2):** Eksekusi lokal AI agent, ConPTY multiplexer, local SQLite event sequence, E2EE encryption endpoint, Windows DPAPI.
+   - **Cloud Relay & Companion API (Laravel 11/12 + Laravel Reverb - Proyek Terpisah):** Pusher-compatible WebSocket server (Reverb) untuk presence & routing pesan instan, REST API untuk pairing device, dan dispatcher Firebase Cloud Messaging (FCM).
+   - **Client (Android Companion - Kotlin + Jetpack Compose - Proyek Terpisah):** UI mobile modern (zero-shadow flat UI), hardware-backed Android Keystore, Pusher client, pemindai QR CameraX, dan terminal/prompt viewer.
+2. **Zero-Knowledge Cloud Relay:**
+   - Laravel Reverb hanya meneruskan ciphertext Base64 via Pusher Private & Presence Channels.
+   - Server relay, database Laravel, maupun admin VPS **tidak pernah bisa membaca** prompt, source code, diff git, atau output terminal.
+3. **Outbound Connections Only (Bypass NAT/Firewall):**
+   - Baik PC Desktop maupun Android hanya melakukan koneksi keluar (*outbound WSS*) ke port 443 VPS Laravel Reverb. Tidak memerlukan port forwarding, UPnP, atau IP publik statis di PC.
+4. **Presence Tracking Otomatis via Reverb Presence Channels:**
+   - Deteksi PC online/offline ditangani secara native oleh protokol Reverb/Pusher (`pusher:member_added` dan `pusher:member_removed`), mengeliminasi kebutuhan membangun custom heartbeat broker di Rust.
 
 ---
 
-## 2. Personas and Primary Use Cases
-
-### Persona A — Developer on the move
-
-A developer launches Codex, Claude Code, or OpenCode on a Windows PC, then leaves the desk. They want to read progress and reply to the running session from their Android phone.
-
-### Persona B — Developer managing multiple agents
-
-A developer has multiple concurrent projects and agents. They need to identify sessions that are running, finished, failed, or awaiting approval.
-
-### Core User Stories
-
-| ID | Story | Priority |
-|---|---|---|
-| US-01 | As a user, I can enable remote access for my desktop host. | P0 |
-| US-02 | As a user, I can securely pair my Android phone by scanning a QR code and confirming on the PC. | P0 |
-| US-03 | As a user, I can view whether a paired PC is online or offline. | P0 |
-| US-04 | As a user, I can list agents and sessions on the paired PC. | P0 |
-| US-05 | As a user, I can inspect recent session output and stream new output. | P0 |
-| US-06 | As a user, I can submit a follow-up prompt to an existing session. | P0 |
-| US-07 | As a user, I can approve or reject a pending agent action with its exact details visible. | P0 |
-| US-08 | As a user, I can reconnect and recover session state after losing network connectivity. | P0 |
-| US-09 | As a user, I can revoke a lost or untrusted mobile device from the desktop. | P0 |
-| US-10 | As a user, I can receive a notification when an agent needs attention or finishes. | P1 |
-| US-11 | As a user, I can create a new session remotely for an allowed workspace/agent. | P1 |
-| US-12 | As a user, I can connect one mobile device to multiple hosts. | P1 |
-| US-13 | As a user, I can view and manage access scopes for each paired device. | P1 |
-| US-14 | As a user, I can keep host access available after closing the desktop window using an optional headless service. | P2 |
-
----
-
-## 3. Scope and Release Strategy
-
-### MVP (P0)
-
-- Tauri Settings: enable/disable remote connection, host identity, connection health.
-- Rust relay with authenticated outbound host and mobile WSS channels.
-- QR-based, expiring, one-time pairing with desktop approval.
-- Persistent device identity and device revocation.
-- Authenticated E2EE between host and phone, with tested interoperability.
-- Host listing and status/presence.
-- Existing session list and detail screen.
-- Live agent status, terminal/output streaming, follow-up prompts.
-- Approve/reject and interrupt for supported agent adapters.
-- Reconnection, event catch-up/resync, RPC validation, and audit trail.
-
-### V1 (P1)
-
-- Firebase Cloud Messaging notifications (minimal-content push payloads).
-- Start new session from Android for allowlisted workspace/agent combinations.
-- Multiple paired hosts, device permission configuration, improved terminal viewer.
-- Metrics, health probes, and operational monitoring.
-
-### Later (P2)
-
-- Headless Windows host independent of the Tauri UI process.
-- Optional direct LAN/Tailscale optimization with relay fallback.
-- iOS/Kotlin Multiplatform support.
-- Horizontal relay scaling, account/team-based host sharing, user preferences sync.
-
----
-
-## 4. Architecture and Ownership
+## 2. Arsitektur Sistem 3-Pilar (Tri-Partite Architecture)
 
 ```text
-Android App (Kotlin, Compose)
-  ├─ Device identity / secure local storage
-  ├─ Relay WSS client + reconnect / E2EE
-  ├─ RPC client + event subscriptions
-  └─ Sessions / Terminal / Approvals / Notifications
-            │ outbound WSS :443
-            ▼
-Cloud Relay on VPS (Rust, Tokio, Axum)
-  ├─ Host/device authentication and routing authorization
-  ├─ Host presence + connection registry
-  ├─ One-time pairing invitation coordination
-  ├─ Rate limits, revocation checks, routing & observability
-  └─ Encrypted payload forwarding (no agent plaintext)
-            ▲ outbound WSS :443
-            │
-PC Host (Rust + Tauri 2)
-  ├─ Relay client + reconnection + E2EE endpoint
-  ├─ Device registry / authorization / RPC dispatcher
-  ├─ Shared agent session manager (single source of truth)
-  ├─ Agent adapters (Codex / Claude Code / OpenCode)
-  ├─ PTY / event bus / event history / SQLite
-  └─ Tauri frontend (shares the same session manager)
+┌─────────────────────────────────────────────────────────────┐
+│                 ANDROID COMPANION APP                       │
+│  (Kotlin, Jetpack Compose, Pusher Java SDK, Android Keystore)│
+│  - QR Scanner (CameraX + ML Kit)                            │
+│  - Hardware-Backed Keys (Ed25519/X25519)                    │
+│  - Live Terminal Stream Viewer                              │
+│  - Prompt Composer & Approval Action Drawer                 │
+│  - Firebase Messaging Client (Background Wakeup)            │
+└──────────────────────────────┬──────────────────────────────┘
+                               │ Outbound WSS :443 (Pusher Protocol)
+                               │ & REST API (HTTPS :443)
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│        LARAVEL 11/12 + REVERB BACKEND (PROYEK TERPISAH)     │
+│  (PHP 8.3+, Laravel Reverb Daemon, MySQL/PostgreSQL, Redis) │
+│                                                             │
+│  ├─ Laravel Reverb WebSocket Server (:8080 proxied via Nginx)│
+│  │   ├─ Presence Channels: `presence-host-{hostId}`          │
+│  │   │   └─ Natively tracks PC Online/Offline state         │
+│  │   ├─ Private Channels: `private-session-{sessionId}`      │
+│  │   │   └─ Relays E2EE Ciphertext via Client Events        │
+│  │   └─ Tuning: max_request_size = 64KB - 128KB, whispering │
+│  ├─ REST API & Auth (Sanctum / Token Auth)                  │
+│  │   ├─ Device Pairing Coordination & QR Verification       │
+│  │   ├─ Pusher Channel Authorization (`/broadcasting/auth`) │
+│  │   └─ Device Revocation & Permissions API                 │
+│  └─ Push Notification Dispatcher (FCM via Laravel Queue)    │
+│      └─ Sends silent wakeups & approval alerts to Android   │
+└──────────────────────────────▲──────────────────────────────┘
+                               │ Outbound WSS :443 (Pusher Protocol)
+                               │ & REST API (HTTPS :443)
+┌──────────────────────────────┴──────────────────────────────┐
+│             PC HOST: VELA DESKTOP (RUST + TAURI 2)          │
+│  (Windows 10/11 x64, ConPTY, Tokio Async Runtime)           │
+│                                                             │
+│  ├─ WebSocket Client (`tokio-tungstenite`) to Laravel Reverb│
+│  ├─ E2EE Engine (Noise Protocol / X25519 + ChaCha20-Poly1305)│
+│  ├─ Windows DPAPI (Secure Host Private Key Storage)         │
+│  ├─ ConPTY Output Fan-Out & Multiplexer (Local UI + Remote) │
+│  ├─ Local SQLite Event Store (Event Sequence & Replay Cache)│
+│  ├─ Agent Supervisor & Session Adapter                      │
+│  │   ├─ Phase 1: Raw Terminal & Prompt Injection            │
+│  │   └─ Phase 2: Structured Tool Call Parsing & Approvals   │
+│  └─ Tauri 2 Frontend (QR Code Pairing Modal & Settings UI)  │
+└─────────────────────────────────────────────────────────────┘
 ```
-
-### 4.1 Core Design Decisions
-
-- **Host is the source of truth** for session lifecycle, workspaces, and agent outputs.
-- **Relay is a transport and access-routing service, not an execution engine.**
-- **Both clients connect outbound**, requiring no desktop port-forwarding.
-- **Every mobile RPC is authenticated and authorized at the host**, even if relay already accepted routing.
-- **Desktop UI and mobile RPC share the same runtime**, rather than creating a second agent process.
-- **No remote plaintext agent traffic is stored in relay logs**; E2EE covers RPC payloads.
-- **E2EE does not hide metadata** such as host/device association, connection time, and traffic volume.
-
-### 4.2 Rust Workspace (Proposed)
-
-```text
-crates/
-  agent-core/          # Session lifecycle, event bus
-  agent-adapters/      # Agent-specific APIs and approval interfaces
-  terminal-core/       # PTY ownership and stream handling
-  remote-protocol/     # Versioned RPC and event schemas
-  remote-crypto/       # Reviewed interoperable secure channel
-  remote-host/         # WSS client, pairing, RPC dispatch
-  remote-relay/        # Axum relay service
-  remote-storage/      # SQLite and device/session metadata
-apps/
-  desktop/             # Existing Tauri 2 desktop app
-  android/             # Native Kotlin/Compose companion
-```
-
-**Implementation rule:** Do not restructure working agent internals solely for architectural purity. Introduce a small, testable interface around existing agent session management and migrate incrementally.
 
 ---
 
-## 5. Functional Requirements
+## 3. Spesifikasi Rinci Apa Saja yang Dibangun (What We Will Build)
 
-### 5.1 Desktop Remote Access Settings
+### 3.1 Komponen A: PC Host — Vela Desktop (Rust + Tauri 2)
 
-| ID | Requirement | Priority | Acceptance criteria |
-|---|---|---|---|
-| FR-001 | User can explicitly enable/disable remote access. | P0 | Disabled means no relay connection or mobile RPC routing. |
-| FR-002 | UI shows relay status, host ID/fingerprint, and last connected time. | P0 | Status changes reflect healthy, reconnecting, offline, and disabled states. |
-| FR-003 | User can generate an expiring QR invitation. | P0 | Invitation expires automatically and cannot be reused. |
-| FR-004 | User must approve each newly paired device. | P0 | Unknown mobile never receives persistent access before approval. |
-| FR-005 | User can list and revoke devices. | P0 | Revocation blocks active and future commands promptly. |
-| FR-006 | User can inspect permission scopes by device. | P1 | Read / Execute / Approve / Terminal are separately enforced. |
+Terletak di repository ini (`src-tauri/` dan `src/`).
 
-### 5.2 Host / Device Presence
-
-| ID | Requirement | Priority | Acceptance criteria |
-|---|---|---|---|
-| FR-010 | Android lists paired hosts and their current state. | P0 | Online/offline based on authenticated heartbeat and TTL; stale state clearly marked. |
-| FR-011 | Host reconnects automatically when internet resumes. | P0 | Backoff with jitter, bounded retries, and no uncontrolled retry storm. |
-| FR-012 | Android supports reauth and reconnect. | P0 | Existing valid pairing survives app restart and temporary network changes. |
-
-### 5.3 Agent Session Visibility
-
-| ID | Requirement | Priority | Acceptance criteria |
-|---|---|---|---|
-| FR-020 | Android can list active/recent sessions. | P0 | Session ID, agent type, workspace, activity state, last activity displayed. |
-| FR-021 | Android displays per-session recent output and live updates. | P0 | Ordered stream, bounded memory, pause/autoscroll, reconnect recovery. |
-| FR-022 | Android can send a prompt to an existing session. | P0 | Prompt reaches original agent session; no duplicate agent created. |
-| FR-023 | Android can interrupt an agent when supported. | P0 | Interrupt targets the selected session and reports success/failure. |
-| FR-024 | Android can approve/reject pending actions. | P0 | Exact command/tool name, target, risk context, and expiry/status shown. |
-| FR-025 | Android can create sessions within allowed workspaces. | P1 | Path is selected from a host allowlist; arbitrary path input rejected. |
-| FR-026 | Android can display unsupported agent capabilities. | P0 | UI hides/disables actions unsupported by the adapter. |
-
-### 5.4 Notification and Audit
-
-| ID | Requirement | Priority | Acceptance criteria |
-|---|---|---|---|
-| FR-030 | Push user when agent needs approval or completes. | P1 | Opening notification performs authenticated fetch; push contains no sensitive output. |
-| FR-031 | Host records security-relevant actions locally. | P0 | Device, time, method, target, outcome available; secrets redacted. |
-| FR-032 | User can revoke all mobile access immediately. | P0 | Active device connections rejected and stored access revoked. |
+1. **Database Lokal SQLite (`remote_storage.rs`):**
+   - Menambahkan dependency `rusqlite` / `sqlx`.
+   - Tabel `paired_devices`: menyimpan `device_id`, `public_key`, `name`, `scopes` (read, execute, approve, terminal), `status` (active/revoked), `paired_at`.
+   - Tabel `session_events`: menyimpan `session_id`, `sequence` (integer bertambah), `event_type`, `payload_encrypted`, `created_at`.
+   - Tabel `rpc_idempotency`: menyimpan `idempotency_key`, `device_id`, `response_hash`, `expiry` untuk mencegah duplikasi eksekusi prompt saat reconnect.
+2. **Kriptografi & Key Storage Windows DPAPI (`remote_crypto.rs`):**
+   - Integrasi `windows-sys` / Win32 DPAPI (`CryptProtectData` & `CryptUnprotectData`) untuk mengenkripsi private key host di `%APPDATA%/Vela/host_identity.bin`.
+   - Key Exchange: X25519 ECDH + HKDF-SHA256 untuk derivasi session key simetris (ChaCha20-Poly1305 / AES-256-GCM).
+3. **Pusher/Reverb Client Worker (`reverb_client.rs`):**
+   - Koneksi WebSocket outbound menggunakan `tokio-tungstenite` ke endpoint Reverb.
+   - Mengimplementasikan handshake Pusher protocol v7:
+     - Subscribe ke `presence-host-{hostId}` dengan signature autentikasi dari endpoint Laravel.
+     - Listen ke channel `client-*` untuk menerima RPC dari Android.
+     - Mengirim event `client-event` untuk streaming output terminal dan status agent.
+   - Loop auto-reconnect dengan exponential backoff dan jitter.
+4. **PTY Output Fan-Out Multiplexer (`src-tauri/src/pty/manager.rs`):**
+   - Memperluas output reader thread ConPTY:
+     - Aliran byte tidak hanya di-emit ke event lokal Tauri `pty-output-<id>`, tetapi juga dipecah ke sequence event SQLite lokal dan dienkripsi ke channel Reverb.
+     - Mengelola buffer chunk (misal 4 KiB - 16 KiB per frame) agar tidak melebihi batas Reverb payload.
+5. **Agent Remote Dispatcher (`agent_remote_dispatcher.rs`):**
+   - Memvalidasi signature & token otorisasi RPC dari HP.
+   - Pengecekan scope izin device (`read`, `execute`, `approve`, `terminal`).
+   - Eksekusi prompt ke session ConPTY target.
+6. **Frontend UI Pairing & Settings (`src/components/settings/MobileAccessModal.tsx`):**
+   - Menu pengaturan "Mobile Companion" di Vela.
+   - Toggle Enable/Disable Remote Access.
+   - Generator QR Code (menggunakan library `qrcode.react`): memuat URL Reverb, `host_id`, one-time invite token, dan fingerprint publik key host.
+   - Dialog konfirmasi saat HP melakukan pairing: mencocokkan SAS (*Short Authentication String* 6 digit).
+   - Daftar device yang terhubung dengan tombol "Revoke".
 
 ---
 
-## 6. Primary UX Flows
+### 3.2 Komponen B: Cloud Relay & Companion Backend (Laravel 11/12 + Reverb)
 
-### 6.1 First-time Pairing
+Proyek terpisah (Repository baru, misal: `vela-backend` atau `vela-relay`).
 
-1. User opens desktop **Settings → Mobile Access → Enable**.
-2. Desktop establishes an authenticated outbound WSS connection to the relay.
-3. User selects **Pair New Device**; host creates a 2-minute one-time invitation.
-4. Tauri displays a QR containing protocol version, relay URL, host identity fingerprint, invitation ID, nonce, and expiration.
-5. Android opens **Add PC → Scan QR** and validates QR shape, freshness, and relay policy.
-6. Android creates a device signing identity in Android Keystore and initiates an authenticated pairing exchange through the relay.
-7. Desktop and Android display matching short authentication codes; desktop shows the requesting device identifier.
-8. User confirms on desktop. Both endpoints bind device identity to the host and establish a persistent authorization record.
-9. Android opens its encrypted, authenticated RPC session and loads host status.
-
-**Failure cases:** expired/replayed invitation, wrong host fingerprint, mismatched verification codes, user rejection, offline host, invalid proof, duplicate key, cryptographic negotiation mismatch. All failures deny pairing by default.
-
-### 6.2 Observe and Continue Agent
-
-1. User opens Android on another network.
-2. App authenticates to relay and establishes an E2EE tunnel to the selected host.
-3. App fetches `session.list`; user selects an existing session.
-4. App obtains current snapshot, subscribes to events, and starts streaming.
-5. User sends `agent.sendPrompt` with an idempotency key.
-6. Host validates device scope, session state, and adapter capability, then forwards prompt to **the same session**.
-7. Host responds `accepted` with command ID; progress/terminal events follow asynchronously.
-
-### 6.3 Approval Flow
-
-1. Agent requests permission to execute a particular action.
-2. Host produces a pending approval object with a unique request ID, precise action details, target, session, and expiry.
-3. Android shows the pending action and user selects Approve or Reject.
-4. Host authenticates authorization (`Approve` scope), verifies that request is still pending, and applies an atomic state transition.
-5. Host returns the final approval result; duplicate or stale responses do not re-execute the action.
-
-### 6.4 Disconnect / Resume
-
-1. Android stores the last applied event sequence per session.
-2. On reconnect, Android reauthenticates and reestablishes fresh secure-session keys.
-3. Android requests `session.resume(lastSequence)`.
-4. Host replays retained events or signals `resync_required` and provides a fresh snapshot.
-5. UI reconciles state without resubmitting any command unless it can safely retry using the same idempotency key.
+1. **Setup Laravel Reverb Server:**
+   - Instalasi Laravel 11/12 + Laravel Reverb (`php artisan install:broadcasting`).
+   - Konfigurasi `config/reverb.php`:
+     ```php
+     'options' => [
+         'max_request_size' => 131072, // 128 KiB untuk PTY buffer
+     ],
+     'resources' => [
+         'channels' => [
+             'enable_client_messages' => true, // Mengaktifkan whispering client-to-client
+         ],
+     ],
+     ```
+   - Nginx reverse proxy dengan TLS/SSL (Let's Encrypt) mengarah ke port Reverb (default 8080).
+2. **Database Skema & Model (MySQL / PostgreSQL):**
+   - `users`: ID user pemilik akun/relay (opsional jika single-tenant, wajib jika multi-device).
+   - `hosts`: `id` (UUID), `user_id`, `name`, `fingerprint`, `public_key`, `last_seen_at`.
+   - `devices`: `id` (UUID), `host_id`, `device_name`, `device_fingerprint`, `public_key`, `fcm_token`, `permissions` (JSON), `is_revoked`.
+   - `pairing_sessions`: `invite_token` (hash), `host_id`, `short_code` (6 digit), `expires_at` (TTL 2 menit), `is_consumed`.
+3. **REST API Endpoints:**
+   - `POST /api/v1/host/register`: Registrasi identitas host baru.
+   - `POST /api/v1/pairing/create`: Host membuat token pairing untuk QR code.
+   - `POST /api/v1/pairing/claim`: Android men-scan QR dan mengirim identitas publiknya.
+   - `POST /api/v1/pairing/confirm`: Host menyetujui pairing setelah mencocokkan kode 6-digit.
+   - `POST /api/v1/device/fcm-token`: Update FCM token Android untuk push notification.
+   - `POST /api/v1/broadcasting/auth`: Autentikasi channel privat & presence Pusher untuk Host dan Android.
+4. **Push Notification Service (FCM):**
+   - Paket `laravel-notification-channels/fcm`.
+   - Job queue background: Ketika host mentrigger webhook/event bahwa "Agent membutuhkan input" atau "Agent selesai menjalankan task", Laravel mengirim push notification ke Android dengan payload minimalis (tanpa mengekspos isi kode di payload FCM).
 
 ---
 
-## 7. WebSocket and RPC Contract
+### 3.3 Komponen C: Android Companion App (Kotlin + Jetpack Compose)
 
-### 7.1 Transport Endpoints (Proposed)
+Proyek terpisah (Repository baru, misal: `vela-android`).
 
-- `wss://relay.example.com/v1/host/connect`
-- `wss://relay.example.com/v1/mobile/connect`
+1. **UI/UX (Universal Zero-Shadow Flat UI):**
+   - Sesuai standar desain: 1px border tajam, kontras tinggi, dark mode native, zero-shadow.
+   - **Screen 1: Hosts Dashboard:** Menampilkan PC yang terhubung, status Online/Offline (real-time via Reverb Presence Channel), jumlah sesi aktif.
+   - **Screen 2: QR Scanner:** Integrasi CameraX + ML Kit untuk scan pairing QR dari layar monitor.
+   - **Screen 3: Session Detail & Terminal Streamer:**
+     - Tampilan output terminal live dengan custom virtualized text viewer (ANSI color parsing).
+     - Tombol autoscroll lock / resume scroll.
+   - **Screen 4: Prompt Composer & Action Drawer:**
+     - Input field untuk mengirim follow-up prompt ke agent.
+     - Quick Action cards: "Approve", "Reject", "Interrupt (Ctrl+C)".
+   - **Screen 5: Device Security & Paired PC Settings:** Daftar izin granted, opsi Unpair.
+2. **Konektivitas Jaringan & Protokol Pusher:**
+   - Library `com.pusher:pusher-websocket-java`.
+   - Reconnect handler otomatis saat transisi Wi-Fi ↔ Seluler.
+   - Intersepsi event `client-terminal-stream` dan request RPC `client-rpc-request`.
+3. **Kriptografi & Android Keystore:**
+   - Private key dihasilkan di dalam Android Hardware-backed Keystore (StrongBox / TEE jika tersedia).
+   - Melakukan dekripsi payload ChaCha20-Poly1305 sebelum dirender ke layar Compose.
+4. **Firebase Cloud Messaging Service (`VelaFirebaseMessagingService`):**
+   - Menerima silent/high-priority push notification.
+   - Menampilkan notifikasi lokal: "Claude Code is waiting for your approval in worktree: feature/auth".
+   - Deep-link langsung membuka layar session bersangkutan setelah autentikasi biometrik/PIN.
 
-All public connections use valid TLS. Do not expose an unauthenticated port on the user PC.
+---
 
-### 7.2 Framing
+## 4. Protokol Komunikasi & Framing Data (Pusher Protocol + E2EE)
 
-**Outer envelope (relay can inspect routing only):**
+Komunikasi antara Android dan Desktop ditransmisikan menggunakan protokol Pusher yang berjalan di atas Laravel Reverb, dengan enkripsi lapis ganda.
 
+### 4.1 Channel Naming Architecture
+- **Presence Channel (Host Presence):** `presence-host-{host_uuid}`
+  - Host dan Android bergabung ke channel ini.
+  - Jika host terhubung, Android menerima event `pusher:member_added`.
+  - Jika host mati / PC sleep / internet putus, Android otomatis menerima `pusher:member_removed`.
+- **Private Channel (Session Tunnel):** `private-host-{host_uuid}`
+  - Digunakan untuk transfer command RPC dan data terminal.
+
+### 4.2 Envelope Framing (Outer Envelope - Dilihat oleh Reverb)
+Pesan dikirim menggunakan Pusher Client Event (`client-*`):
 ```json
 {
-  "v": 1,
-  "type": "route.data",
-  "connectionId": "conn_123",
-  "payload": "BASE64URL_E2EE_CIPHERTEXT"
-}
-```
-
-**Inner encrypted RPC request (after host decryption):**
-
-```json
-{
-  "v": 1,
-  "id": "req_1001",
-  "type": "request",
-  "method": "agent.sendPrompt",
-  "params": {
-    "sessionId": "session_abc",
-    "prompt": "Continue fixing authentication tests"
-  },
-  "idempotencyKey": "cmd_48df"
-}
-```
-
-**Response:**
-
-```json
-{
-  "v": 1,
-  "id": "req_1001",
-  "type": "response",
-  "result": {
-    "commandId": "cmd_48df",
-    "accepted": true
-  }
-}
-```
-
-`accepted=true` confirms host-side acceptance, **not completion of agent work**. Completion is reported as a separate event.
-
-**Event:**
-
-```json
-{
-  "v": 1,
-  "type": "event",
-  "event": "agent.status",
-  "sessionId": "session_abc",
-  "sequence": 1025,
+  "event": "client-e2ee-message",
+  "channel": "private-host-d3b07384-d113-4966-9e99-c0c451f04123",
   "data": {
-    "status": "running"
+    "v": 1,
+    "from_device_id": "dev-and-992a",
+    "nonce": "kL94bVc7xZ1...",
+    "ciphertext": "BASE64URL_ENCRYPTED_PAYLOAD_HERE"
   }
 }
 ```
+*Catatan:* Laravel Reverb hanya melihat metadata routing di atas dan menyalurkannya. Server Reverb tidak memiliki kunci privat untuk mendekripsi `ciphertext`.
 
-### 7.3 RPC Methods
+### 4.3 Payload Terenkripsi (Inner Payload - Setelah Didekripsi di Desktop / Android)
 
-| RPC | Purpose | Scope | Phase |
-|---|---|---|---|
-| `host.getCapabilities` | Negotiate supported protocol/features | Read | MVP |
-| `host.getStatus` | Host connectivity/runtime information | Read | MVP |
-| `agent.list` | Available agent types | Read | MVP |
-| `session.list` | Enumerate sessions | Read | MVP |
-| `session.get` | Obtain session snapshot | Read | MVP |
-| `session.resume` | Replay events/resync | Read | MVP |
-| `terminal.subscribe` | Receive output stream | Read | MVP |
-| `agent.sendPrompt` | Continue selected agent session | Execute | MVP |
-| `agent.interrupt` | Interrupt active action | Execute | MVP |
-| `agent.approve` | Approve pending action | Approve | MVP |
-| `agent.reject` | Reject pending action | Approve | MVP |
-| `session.create` | Start allowlisted session | Execute | V1 |
-| `workspace.list` | List allowed workspaces | Read | V1 |
-| `terminal.input` | Raw terminal input | Terminal | Later, opt-in |
+#### A. Request dari Android ke PC Host:
+```json
+{
+  "rpc_id": "req-8841a",
+  "method": "agent.send_prompt",
+  "params": {
+    "session_id": "term-1740001-xyz",
+    "prompt": "Fix unit tests in src/auth.rs and rerun cargo test"
+  },
+  "idempotency_key": "idem-99120348",
+  "timestamp": 1776478900
+}
+```
 
-### 7.4 Error Model
+#### B. Stream Terminal dari PC Host ke Android:
+```json
+{
+  "type": "terminal.chunk",
+  "session_id": "term-1740001-xyz",
+  "sequence": 1402,
+  "data_b64": "G1swOzMxbUZhaWxlZCB0ZXN0czobWzBt..."
+}
+```
 
-Errors must carry stable machine codes, human-readable messages safe to display, and optional retry details. Codes include `UNAUTHENTICATED`, `FORBIDDEN`, `HOST_OFFLINE`, `SESSION_NOT_FOUND`, `UNSUPPORTED_CAPABILITY`, `APPROVAL_EXPIRED`, `CONFLICT`, `RATE_LIMITED`, `RESYNC_REQUIRED`, `PROTOCOL_UNSUPPORTED`, and `INTERNAL_ERROR`.
-
-### 7.5 Protocol Behavior
-
-- Versioned envelope with explicit minimum/maximum compatible versions.
-- Request/response correlation using unique `id`.
-- Deduplication of side-effect commands using durable `idempotencyKey` storage with bounded retention.
-- Monotonically increasing per-session event `sequence` with defined truncation/resync behavior.
-- Bounded payload sizes, subscriptions, buffers, and per-device in-flight requests.
-- Flow control/backpressure: prioritize approvals/control over high-volume terminal output.
-- Distinguish *requested*, *accepted*, *started*, *completed*, *failed*, and *cancelled* states.
-- Agent adapters declare capabilities, including whether interrupt and structured approval are supported.
-- Avoid assuming one JSON representation is sufficient for all PTY data; support binary terminal frames in later iterations.
-
----
-
-## 8. Security Requirements and Threat Model
-
-### 8.1 Trust Boundaries
-
-1. **Android device:** untrusted until paired, may be lost or compromised.
-2. **VPS relay:** routing infrastructure; must not be trusted with plaintext commands/output.
-3. **PC host:** trusted execution endpoint, responsible for enforcement and process authority.
-4. **AI agent / shell:** high-risk execution subsystem; requests may affect code, files, credentials, and processes.
-
-### 8.2 Mandatory Controls
-
-| ID | Requirement |
-|---|---|
-| SEC-01 | TLS 1.3/WSS or modern secure TLS baseline; strict certificate validation. |
-| SEC-02 | Per-host and per-device cryptographic identities; no shared API secret baked into APK. |
-| SEC-03 | Pairing invitation is one-time, strongly random, expires after ~2 minutes, and requires human desktop approval. |
-| SEC-04 | Pairing authenticates both host and mobile key identities; user verifies a matching short authentication code or equivalent authenticated confirmation. |
-| SEC-05 | RPC content is protected by authenticated E2EE; relay cannot decrypt prompts or terminal streams. |
-| SEC-06 | Use reviewed authenticated key exchange, KDF, AEAD, fresh session keys, anti-replay counters, and session rekey policy. Do not invent a custom cryptographic handshake. |
-| SEC-07 | Android private key stored using Android Keystore (hardware-backed where available); desktop secret protected using OS facilities such as Windows DPAPI. |
-| SEC-08 | Authorization checked **on host for every RPC method and target**; device grants are least-privilege. |
-| SEC-09 | Device revocation invalidates active sessions and subsequent authentications; disable-all switch available. |
-| SEC-10 | Strict command allowlist; raw terminal access is disabled by default and separately scoped. |
-| SEC-11 | Redact sensitive values from logs; do not send plaintext agent content in push notifications. |
-| SEC-12 | Message rate limits, size limits, heartbeats, idle timeouts, and backpressure on relay and host. |
-| SEC-13 | Idempotency and replay protections prevent repeated prompt/approval execution. |
-| SEC-14 | Security testing of pairing, MITM, stolen QR, lost device, relay compromise, privilege escalation, and duplicate command delivery. |
-
-### 8.3 Cryptographic Design Direction
-
-- Identity signatures: Ed25519 **where supported and interoperable**.
-- Key agreement: X25519-based authenticated key exchange, ideally through an audited protocol such as a supported Noise pattern.
-- Derivation: HKDF-SHA256; message protection via ChaCha20-Poly1305 or AES-GCM.
-- Design review **must** validate handshake pattern, transcript binding, nonce uniqueness, session rekeying, and cross-platform Android Keystore integration before implementation is marked DONE.
-
-**Important:** Algorithm selections are design candidates, not a safe complete protocol by themselves. A reviewed, interoperability-tested implementation is an explicit release gate.
-
-### 8.4 Permission Model
-
-| Scope | Allowed actions |
-|---|---|
-| `read` | Host presence, session lists, state, authorized output |
-| `execute` | Follow-up prompt, interrupt, optionally create session |
-| `approve` | Respond to pending tool/permission requests |
-| `terminal` | Raw PTY input (advanced; disabled by default) |
-| `admin` | Device/security management (desktop-only for MVP) |
-
-New devices default to `read`; user explicitly grants `execute` and/or `approve` during or after pairing. No Android device has `admin` scope in MVP.
+#### C. Request Approval dari Agent ke Android:
+```json
+{
+  "type": "agent.approval_required",
+  "request_id": "appr-0012",
+  "session_id": "term-1740001-xyz",
+  "tool_name": "bash",
+  "command": "git push origin main --force",
+  "risk_level": "danger",
+  "expires_at": 1776479020
+}
+```
 
 ---
 
-## 9. Reliability, Background Behavior, and Notifications
+## 5. Alur UX Utama (UX Flows)
 
-### 9.1 Reconnect
+### 5.1 Alur Pairing Pertama Kali (QR Code & Mutual SAS)
+1. **Desktop:** Pengguna membuka menu *Vela Settings → Remote Companion → Enable*.
+2. **Desktop:** Vela melakukan handshake outbound WSS ke Laravel Reverb dan membuat token pairing via REST API Laravel.
+3. **Desktop:** Layar Vela menampilkan QR Code yang berisi: URL Reverb, `host_id`, `invite_token`, dan `host_public_key_fingerprint`.
+4. **Android:** Pengguna membuka aplikasi Vela Companion di HP, menekan *Add PC*, lalu memindai QR code via kamera.
+5. **Android:** Aplikasi HP membuat kunci identitas di Android Keystore dan mengirim permintaan claim ke Laravel API.
+6. **Mutual Verification (Anti-MITM):**
+   - Layar Desktop dan layar HP sama-sama memunculkan **Short Authentication String (SAS)** berupa 6 digit angka yang identik (dihasilkan dari derivasi hash kunci publik kedua pihak).
+   - Pengguna menekan tombol "Confirm & Allow" di Desktop Vela.
+7. **Pairing Selesai:** Kunci publik HP disimpan di SQLite Desktop dan DB Laravel. Android langsung masuk ke dashboard host.
 
-- Exponential backoff with jitter, reconnect cap and network-aware retry.
-- Heartbeat/ping-pong and server-side TTL distinguish connected versus stale.
-- Fresh authenticated/E2EE session upon reconnect.
-- Durable idempotency records prevent duplicated side effects after unknown acknowledgement.
-- Session events can be replayed from local PC storage, within retention policy.
+### 5.2 Alur Pemantauan & Input Prompt Jarak Jauh
+1. Pengguna berada di jaringan seluler 4G/5G di luar rumah/kantor.
+2. Membuka aplikasi Android → Status PC terlihat **Online (Hijau)** via Reverb Presence.
+3. Memilih sesi aktif (misal: Sesi "Claude Code - Worktree feature/auth").
+4. Android melakukan subscribe ke event stream sesi tersebut.
+5. Desktop mengirimkan snapshot status terakhir + buffer output terbaru.
+6. Pengguna mengetik instruksi baru di Android, lalu menekan tombol *Send*.
+7. Pesan dienkripsi di HP → dikirim lewat Reverb → diterima Vela Desktop → didekripsi → diinjeksikan langsung ke ConPTY sesi agent yang bersangkutan.
 
-### 9.2 Android Background Policy
-
-- Foreground: WebSocket for real-time interaction.
-- Background: do not rely on indefinite Android WebSocket execution.
-- V1: use Firebase Cloud Messaging for minimal-content signals; user opens app to authenticate and fetch actual details.
-- Notifications deep-link to a host/session only after device authorization and secure session establishment.
-
-### 9.3 Host Lifecycle
-
-- MVP: remote service lives in Tauri process; minimize-to-tray keeps it running if OS supports it.
-- If Tauri is killed or PC sleeps, the host becomes offline and Android shows actionable status.
-- P2: independently managed, single-owner Rust host process/service and local IPC with Tauri UI.
-
----
-
-## 10. Data Model (Logical)
-
-### PC Host (SQLite)
-
-- `host_identity`: host ID, public-key metadata, protected private-key reference.
-- `paired_devices`: device ID, public key, friendly name, permissions, created/revoked timestamps.
-- `agent_sessions`: session ID, adapter type, workspace ID, state, timestamps.
-- `session_events`: session ID, event sequence, event type, retained payload, timestamps.
-- `rpc_idempotency`: device ID, idempotency key, command status/result reference, expiry.
-- `security_audit`: device ID, action, resource, outcome, timestamp, redacted metadata.
-
-### Relay (SQLite MVP)
-
-- `registered_hosts`: routing ID and verified identity metadata.
-- `registered_devices`: verified identity metadata and per-host routing grants.
-- `pairing_invitations`: one-time token hash/metadata, expiry, consumption state.
-- `revocations`: invalidated device/host grants and relevant timestamps.
-
-**Data minimization:** Do not store prompts, source code, terminal output, or E2EE session keys in relay persistence. Store only the metadata required for routing/security, with retention limits.
+### 5.3 Alur Background & Notifikasi (FCM Wakeup)
+1. Aplikasi Android berada di latar belakang (*background*) atau layar HP mati.
+2. Agent di PC menemui kondisi *Waiting for User Approval* atau *Task Completed*.
+3. Desktop Vela mengirim sinyal webhook aman ke Laravel API: `"Device X requires notification for Session Y"`.
+4. Laravel mengirim push notification FCM berkategori `HIGH_PRIORITY` ke Android.
+5. Layar HP memunculkan notifikasi: *"Vela: Claude Code requires approval for bash command"*.
+6. Pengguna mengetuk notifikasi → aplikasi terbuka → biometrik terverifikasi → E2EE channel terhubung kembali → dialog approval muncul.
 
 ---
 
-## 11. Android UI Requirements
+## 6. Persyaratan Keamanan & Model Ancaman (Threat Model)
 
-| Screen | Minimum contents |
-|---|---|
-| Onboarding | Product overview, local notification permission when needed, scan QR CTA |
-| Pair Host | QR scanner, host verification, pairing state/error, device name |
-| Hosts | Paired host list, online/offline, last seen, agent count |
-| Host Detail | Available agents, active/recent sessions, host health |
-| Session Detail | Agent type, workspace, status, recent output, prompt composer, interrupt |
-| Approvals | Exact pending action, requested operation, associated session, approve/reject |
-| Settings | Device/host information, disconnect, device grant visibility, diagnostic status |
-
-Design states required for every networked screen: `loading`, `empty`, `online`, `offline`, `reconnecting`, `unauthorized`, `error`, and `stale_data` where applicable.
-
-Accessibility: readable typography, sufficient contrast, screen reader labels, and no approval action requiring a hidden gesture.
-
----
-
-## 12. Non-Functional Requirements and Initial SLO Targets
-
-These are **design targets to measure**, not guaranteed performance claims.
-
-| Category | Target |
-|---|---|
-| Availability | Relay service target ≥99.5% monthly availability for initial production |
-| Command responsiveness | p95 authenticated host RPC acknowledgement ≤2 seconds under normal connectivity |
-| Status freshness | Online host presence detected within ≤15 seconds in normal conditions |
-| Event latency | p95 relay-mediated event arrival ≤1.5 seconds on stable networks |
-| Reconnect | Resume event view automatically, without duplicate commands, after transient disconnection |
-| Data integrity | Event ordering per session; explicit gaps and resync rather than silent loss |
-| Scalability | Design for one relay instance initially; load-test configured max hosts/connections before launch |
-| Privacy | No plaintext prompt/terminal payload stored or logged by relay |
-| Observability | Structured metrics for connection count, latency, disconnects, route errors, pairing failures |
-| Compatibility | Protocol version negotiation plus fixtures tested across Rust and Kotlin |
-
-Benchmark targets must be revalidated using actual VPS location, mobile networks, and host load. Do not ship claims of guaranteed low latency without measurements.
-
----
-
-## 13. Testing and Acceptance Plan
-
-### Unit Tests
-
-- RPC schema/validation and permission mapping.
-- Agent adapter capabilities and session state transitions.
-- Pairing expiry, single-use behavior, revocation.
-- Command deduplication and event ordering.
-- Serialization fixtures shared between Rust and Kotlin.
-
-### Integration Tests
-
-- End-to-end pairing over relay with both endpoints authenticated.
-- Android can list and continue an already-running PC session.
-- Relay cannot decrypt RPC contents.
-- Approval race: first valid response wins, later responses rejected.
-- Host restart and client reconnect work without stale access grants.
-- Relay restart triggers reconnect and state restoration.
-
-### Security Tests
-
-- QR replay, expired invitation, invalid fingerprint, unauthorized device, revoked device.
-- Invalid/oversized frames and high-volume terminal output.
-- Attempt to bypass method permissions or access session of another host.
-- Replay and nonce misuse detection.
-- Secure storage behavior on supported Android API levels.
-
-### Device/Network Matrix
-
-- PC on home Wi-Fi and Android on cellular data.
-- PC behind CGNAT; no inbound port forwarding.
-- Android switches Wi-Fi ↔ cellular during live stream.
-- Host sleeps/restarts; correct offline behavior.
-- Android is backgrounded/force-stopped; notification and eventual resync behavior.
-
-### MVP Release Gate
-
-MVP is complete only when: paired Android on cellular can securely connect to a PC without inbound router changes, monitor a running agent, submit exactly one follow-up prompt to the original session, handle a permitted approval, recover after reconnect, and lose access immediately after revocation. All mandatory security controls and automated tests must pass.
-
----
-
-## 14. Phased Implementation Plan and Task Tracker
-
-**Task status definitions:** `WAIT` = not started, `IN_PROGRESS` = active, `BLOCKED` = waiting on dependency, `DONE` = implemented and validated.
-
-Every task begins as `WAIT` and is marked `DONE` only after its acceptance criteria and required tests pass.
-
-| ID | Phase | Task | Priority | Status |
-|---|---|---|---|---|
-| TASK-001 | 1 — Agent Core | Audit existing Tauri session/PTY and agent adapter architecture | P0 | WAIT |
-| TASK-002 | 1 — Agent Core | Expose shared `AgentSessionManager` interface | P0 | WAIT |
-| TASK-003 | 1 — Agent Core | Define adapter capabilities and structured approval model | P0 | WAIT |
-| TASK-004 | 1 — Agent Core | Add session event sequence and durable history | P0 | WAIT |
-| TASK-005 | 2 — Protocol | Define versioned RPC schemas and error model | P0 | WAIT |
-| TASK-006 | 2 — Protocol | Add Rust/Kotlin shared serialization fixtures | P0 | WAIT |
-| TASK-007 | 2 — Relay | Implement Rust relay routing and authenticated host connection | P0 | WAIT |
-| TASK-008 | 2 — Relay | Implement mobile connection, presence and heartbeat | P0 | WAIT |
-| TASK-009 | 2 — Relay | Configure WSS reverse proxy and VPS deployment | P0 | WAIT |
-| TASK-010 | 3 — Pairing | Build Tauri pairing settings and QR invitation screen | P0 | WAIT |
-| TASK-011 | 3 — Pairing | Implement device identity and protected key storage | P0 | WAIT |
-| TASK-012 | 3 — Pairing | Implement reviewed cross-platform authenticated E2EE handshake | P0 | WAIT |
-| TASK-013 | 3 — Pairing | Implement mutual verification, one-time invite, desktop approval | P0 | WAIT |
-| TASK-014 | 3 — Pairing | Implement revocation and default-deny permission checks | P0 | WAIT |
-| TASK-015 | 4 — Android | Create Kotlin/Compose shell, DI and navigation | P0 | WAIT |
-| TASK-016 | 4 — Android | Build QR scanner, hosts screen and connection indicators | P0 | WAIT |
-| TASK-017 | 4 — Android | Implement authenticated WebSocket, reconnection and RPC repository | P0 | WAIT |
-| TASK-018 | 4 — Agent Control | Build session list/detail and streamed output | P0 | WAIT |
-| TASK-019 | 4 — Agent Control | Implement existing-session follow-up prompts and interrupt | P0 | WAIT |
-| TASK-020 | 4 — Agent Control | Implement pending approval UI and safe host-side execution | P0 | WAIT |
-| TASK-021 | 5 — Reliability | Implement idempotency, event replay, resync and backpressure | P0 | WAIT |
-| TASK-022 | 5 — Quality | Add end-to-end network and security test suite | P0 | WAIT |
-| TASK-023 | 5 — Notifications | Integrate FCM signals and deep-link fetch | P1 | WAIT |
-| TASK-024 | 5 — Capabilities | Allowlisted remote session creation | P1 | WAIT |
-| TASK-025 | 5 — Multi-host | Multiple paired hosts and per-device scopes | P1 | WAIT |
-| TASK-026 | 6 — Operations | Add observability, rate limiting, operational runbook | P1 | WAIT |
-| TASK-027 | 6 — Security | Threat-model review, penetration testing, remediation | P0 | WAIT |
-| TASK-028 | 6 — Host Lifecycle | Extract optional headless Rust host and local IPC | P2 | WAIT |
-| TASK-029 | 6 — Production | Version compatibility, migration, installer and rollback validation | P1 | WAIT |
-
-### Dependencies / Critical Path
-
-`TASK-001 → TASK-002/003/004 → TASK-005/006 → TASK-007/008 → TASK-010/011/012/013/014 → TASK-015/016/017 → TASK-018/019/020 → TASK-021/022/027`.
-
-Parallel work is possible on Android UI mocks while relay/crypto contracts are under development. The production E2EE handshake and host authorization must be complete before any remote execution is enabled.
-
----
-
-## 15. Risks, Mitigations, and Open Decisions
-
-| Risk | Impact | Mitigation |
+| Ancaman (*Threat*) | Dampak | Mitigasi Wajib |
 |---|---|---|
-| Agent CLIs have different interaction models | Prompts/approval may be unreliable | Capability-based adapters; never guess terminal input format |
-| Custom cryptographic protocol errors | Severe compromise | Audited protocol + cross-platform conformance tests + security review |
-| Relay compromise or abuse | Metadata exposure, traffic disruption | E2EE, least data, rate limits, strict authorization and monitoring |
-| PC sleeps or Tauri exits | Sessions unavailable | Clear offline UI, tray mode for MVP, headless host later |
-| Android background restrictions | Missed live WebSocket events | FCM signal + fetch/resync on app open |
-| Event stream volume | Memory or bandwidth pressure | Bounded buffers, streaming backpressure, limits and retention |
-| Stolen paired mobile | Remote PC control misuse | Keystore identity, revocation, default read-only, optional biometric step-up |
-| Protocol changes between app versions | Client/server incompatibility | Version negotiation and compatibility tests |
-
-### Decisions to Confirm Before Coding
-
-1. Which agent adapter(s) are already implemented, and whether their sessions expose structured prompt/approval APIs or PTY-only control.
-2. Whether the Tauri desktop is Windows-only for MVP.
-3. Whether Android `minSdk` should target API 24 (Android 7) or a newer baseline; verify crypto library/Keystore behavior against the chosen floor.
-4. Existing repository directory conventions and storage layer to preserve.
-5. Relay deployment domain and VPS architecture.
-6. Exactly which actions require desktop-side confirmation or biometric step-up.
-7. Retention policy for local session events and security audit logs.
+| **Server Relay Laravel / VPS Diretas** | Penyerang mengontrol server Reverb dan database MySQL. | **Zero-Knowledge E2EE**: Seluruh konten pesan (prompt, source code, token) dienkripsi end-to-end antar perangkat. Penyerang hanya melihat ciphertext acak. |
+| **Man-In-The-Middle (MITM) saat Pairing** | Pihak ketiga mencegat QR code dan memalsukan identitas. | **6-Digit SAS Code Verification**: Pengguna wajib memverifikasi kode 6-digit yang sama antara monitor PC dan layar HP sebelum akses diberikan. |
+| **Ponsel Android Hilang / Dicuri** | Penemu ponsel mengakses terminal PC secara ilegal. | **Instant Revocation & Keystore**: Host dapat mencabut izin ponsel kapan saja dari desktop dengan satu klik. Kunci privat di HP dilindungi oleh Android Keystore + Biometrik (Fingerprint/Face Unlock). |
+| **Eksekusi Perintah Ganda (*Replay Attack*)** | Gangguan koneksi seluler menyebabkan prompt terkirim dua kali. | **Idempotency Keys**: Setiap pesan RPC dari HP menyertakan UUID `idempotency_key`. Desktop menolak eksekusi jika key tersebut sudah pernah diproses. |
+| **Koneksi Seluler Putus Mendadak** | Kehilangan potongan log terminal saat stream berlangsung. | **Monotonic Sequence Numbering**: Output terminal diberi nomor sequence (`101, 102, ...`). Saat reconnect, HP meminta `session.resume(last_seq)` dari cache SQLite desktop. |
 
 ---
 
-## 16. Definition of Done
+## 7. Rencana Implementasi & Pelacak Tugas (Task Tracker)
 
-A task can be marked `DONE` when:
+Status: `WAIT` = Belum dimulai, `IN_PROGRESS` = Sedang dikerjakan, `BLOCKED` = Terhalang, `DONE` = Selesai & Terverifikasi.
 
-- Code is integrated into the actual Rust/Tauri or Kotlin project.
-- The feature works against real agent sessions, not only mock data (unless it is an explicitly UI-only task).
-- Unit/integration tests relevant to the task pass.
-- Security and authorization cases have been tested.
-- UI supports offline/error/loading states when applicable.
-- Telemetry does not disclose sensitive content.
-- README/protocol documentation is updated.
-- Regression tests establish no unintended changes to existing desktop behavior.
+### Fase 1: Backend Laravel Reverb (Proyek Terpisah)
+| ID | Tugas | Prioritas | Status |
+|---|---|---|---|
+| T-BE-01 | Setup Laravel 11/12 + Reverb + Nginx SSL di VPS | P0 | WAIT |
+| T-BE-02 | Konfigurasi Reverb: max payload 128KB, client whispering enabled | P0 | WAIT |
+| T-BE-03 | Buat skema DB & migrasi: `hosts`, `devices`, `pairing_sessions` | P0 | WAIT |
+| T-BE-04 | Buat API pairing handshake (create, claim, confirm, revoke) | P0 | WAIT |
+| T-BE-05 | Implementasi endpoint `/broadcasting/auth` dengan token Sanctum/Device | P0 | WAIT |
+| T-BE-06 | Konfigurasi FCM (Firebase Cloud Messaging) channel di Laravel | P1 | WAIT |
 
-## 17. Reference Reading
+### Fase 2: PC Host — Vela Desktop (Rust + Tauri 2)
+| ID | Tugas | Prioritas | Status |
+|---|---|---|---|
+| T-PC-01 | Tambahkan dependency SQLite (`rusqlite`) & migrasi tabel lokal | P0 | WAIT |
+| T-PC-02 | Implementasi modul E2EE (X25519 + ChaCha20-Poly1305) & Windows DPAPI | P0 | WAIT |
+| T-PC-03 | Implementasi Pusher/Reverb WebSocket client via `tokio-tungstenite` | P0 | WAIT |
+| T-PC-04 | Hubungkan presence channel `presence-host-{id}` untuk deteksi status online | P0 | WAIT |
+| T-PC-05 | Modifikasi [pty/manager.rs](file:///C:/DEKSTOP/RUST/terminal_manager/src-tauri/src/pty/manager.rs): fan-out output stream ke Reverb & simpan sequence ke SQLite | P0 | WAIT |
+| T-PC-06 | Implementasi RPC dispatcher lokal (terima `send_prompt`, verifikasi scope, injeksi ke ConPTY) | P0 | WAIT |
+| T-PC-07 | Buat UI Settings di Tauri: Generate QR pairing, modal konfirmasi SAS, list devices & revoke | P0 | WAIT |
 
-- Orca: https://www.onorca.dev/
-- Orca source: https://github.com/stablyai/orca
-- Orca cloud folder: https://github.com/stablyai/orca/tree/main/cloud
-- Tauri 2: https://v2.tauri.app/
-- Tokio: https://tokio.rs/
-- Axum: https://docs.rs/axum/
-- Android Keystore: https://developer.android.com/privacy-and-security/keystore
-- Firebase Cloud Messaging: https://firebase.google.com/docs/cloud-messaging
-- OWASP WebSocket Security Cheat Sheet: https://cheatsheetseries.owasp.org/cheatsheets/WebSocket_Security_Cheat_Sheet.html
+### Fase 3: Android Companion App (Kotlin + Jetpack Compose)
+| ID | Tugas | Prioritas | Status |
+|---|---|---|---|
+| T-AD-01 | Setup project Android: Jetpack Compose, Navigation, Dagger Hilt | P0 | WAIT |
+| T-AD-02 | Implementasi CameraX + ML Kit untuk pemindai QR Code pairing | P0 | WAIT |
+| T-AD-03 | Implementasi Android Keystore (generate & simpan keypair aman) | P0 | WAIT |
+| T-AD-04 | Integrasi `pusher-websocket-java` client ke Laravel Reverb | P0 | WAIT |
+| T-AD-05 | Implementasi dekripsi E2EE pesan & verifikasi SAS 6-digit | P0 | WAIT |
+| T-AD-06 | Buat UI Dashboard Host: Indikator Online/Offline real-time via Presence Channel | P0 | WAIT |
+| T-AD-07 | Buat UI Live Terminal Streamer dengan ANSI viewer & pause/autoscroll | P0 | WAIT |
+| T-AD-08 | Buat UI Prompt Composer & kontrol interupsi (Ctrl+C / Kill) | P0 | WAIT |
+| T-AD-09 | Integrasi Firebase Cloud Messaging untuk notifikasi background | P1 | WAIT |
 
 ---
 
-**PRD owner note:** This document defines the proposed product and acceptance requirements. It is not a claim that any portion is implemented in the existing project. Reconcile this PRD with the current repository architecture before development.
+## 8. Definisi Selesai (Definition of Done)
+
+Proyek Remote Agent Companion dinyatakan siap produksi (Production-Ready) apabila:
+1. **End-to-End Pairing Sukses:** Ponsel Android dapat memindai QR code di PC Vela, kode SAS 6-digit cocok di kedua layar, dan otorisasi tersimpan aman di DPAPI (PC) dan Keystore (Android).
+2. **Koneksi Menembus Firewall/CGNAT:** Ponsel di jaringan seluler 4G/5G dapat terhubung ke PC di jaringan Wi-Fi rumah tanpa memerlukan konfigurasi router atau port forwarding.
+3. **Streaming & Input Berfungsi:** Output terminal ConPTY dari sesi Claude Code / Gemini CLI muncul di HP secara real-time (< 500ms latensi normal), dan prompt yang dikirim dari HP berhasil dieksekusi di PC tanpa membuat sesi ganda.
+4. **Zero-Knowledge Terbukti:** Log di server Laravel Reverb diverifikasi hanya berisi ciphertext Base64 acak dan tidak pernah mengekspos teks kode atau prompt pengguna.
+5. **Pencabutan Akses Efektif:** Menekan tombol "Revoke" di Desktop Vela seketika memutus akses HP dan menolak seluruh pesan berikutnya.
+6. **Build Rilis Terverifikasi:**
+   - Desktop: `npx @tauri-apps/cli build --no-bundle` menghasilkan binary rilis `src-tauri/target/release/vela.exe`.
+   - Android: APK rilis ditandatangani dengan keystore produksi.
+   - Backend: Daemon Reverb berjalan stabil di bawah supervisor/systemd di VPS.

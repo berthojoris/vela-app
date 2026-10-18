@@ -445,6 +445,98 @@ impl GitManager {
             .and_then(Self::checked).map_err(|error| format!("{error}\nChanges staged by git add -A remain staged. Check git status before retrying."))?;
         Ok(String::from_utf8_lossy(&result.stdout).trim().to_string())
     }
+    pub fn rollback_file(worktree_path: &str, file_path: &str) -> Result<(), String> {
+        let path = Self::directory(worktree_path)?;
+        let file = file_path.trim().replace('\\', "/");
+        if file.is_empty()
+            || file.starts_with('-')
+            || file.starts_with('/')
+            || file.contains("..")
+            || file.contains(':')
+            || file.chars().any(char::is_control)
+        {
+            return Err("Invalid file path for rollback".into());
+        }
+        let _operation = Mutation::begin(&path)?;
+
+        let has_head = Self::run(
+            Self::git_cmd().args(["-C", &path, "rev-parse", "--verify", "HEAD"]),
+            64 * 1024,
+        )?
+        .status
+        .success();
+
+        let in_head = if has_head {
+            Self::run(
+                Self::git_cmd().args(["-C", &path, "cat-file", "-e", &format!("HEAD:{file}")]),
+                64 * 1024,
+            )?
+            .status
+            .success()
+        } else {
+            false
+        };
+
+        if in_head {
+            let _ = Self::run(
+                Self::git_cmd().args(["-C", &path, "reset", "HEAD", "--", &file]),
+                64 * 1024,
+            );
+            let mut cmd = Self::git_cmd();
+            cmd.args(["-C", &path, "checkout", "HEAD", "--", &file]);
+            Self::checked(Self::run(&mut cmd, 64 * 1024)?)?;
+        } else {
+            let rm_res = Self::run(
+                Self::git_cmd().args(["-C", &path, "rm", "-f", "--", &file]),
+                64 * 1024,
+            );
+            if rm_res.as_ref().map(|o| !o.status.success()).unwrap_or(true) {
+                let _ = Self::run(
+                    Self::git_cmd().args(["-C", &path, "clean", "-f", "-d", "--", &file]),
+                    64 * 1024,
+                );
+            }
+            let target = Path::new(&path).join(&file);
+            if target.exists() {
+                if target.is_dir() {
+                    let _ = std::fs::remove_dir_all(&target);
+                } else {
+                    let _ = std::fs::remove_file(&target);
+                }
+            }
+        }
+        Ok(())
+    }
+    pub fn reset_worktree(worktree_path: &str) -> Result<(), String> {
+        let path = Self::directory(worktree_path)?;
+        let _operation = Mutation::begin(&path)?;
+
+        let has_head = Self::run(
+            Self::git_cmd().args(["-C", &path, "rev-parse", "--verify", "HEAD"]),
+            64 * 1024,
+        )?
+        .status
+        .success();
+
+        if has_head {
+            Self::checked(Self::run(
+                Self::git_cmd().args(["-C", &path, "reset", "--hard", "HEAD"]),
+                256 * 1024,
+            )?)?;
+        } else {
+            let _ = Self::run(
+                Self::git_cmd().args(["-C", &path, "rm", "-rf", "--cached", "."]),
+                256 * 1024,
+            );
+        }
+
+        Self::checked(Self::run(
+            Self::git_cmd().args(["-C", &path, "clean", "-f", "-d"]),
+            256 * 1024,
+        )?)?;
+
+        Ok(())
+    }
 }
 
 fn parse_status(bytes: &[u8]) -> Vec<(String, String)> {
@@ -652,5 +744,35 @@ mod tests {
         assert_eq!(GitManager::list_worktrees(&path).unwrap().len(), 1);
         assert!(GitManager::create_worktree(&path, "--invalid", None).is_err());
         assert!(GitManager::remove_worktree(&path, &path, false).is_err());
+
+        // Test rollback per file and reset all changes
+        let file_tracked = scratch.0.join("repo/first.txt");
+        let file_untracked = scratch.0.join("repo/untracked.txt");
+        std::fs::write(&file_tracked, "modified content\n").unwrap();
+        std::fs::write(&file_untracked, "new untracked\n").unwrap();
+        assert_eq!(GitManager::get_worktree_diff(&path).unwrap().len(), 2);
+
+        // Rollback untracked file
+        GitManager::rollback_file(&path, "untracked.txt").unwrap();
+        assert!(!file_untracked.exists());
+        assert_eq!(GitManager::get_worktree_diff(&path).unwrap().len(), 1);
+
+        // Rollback tracked file
+        GitManager::rollback_file(&path, "first.txt").unwrap();
+        assert_eq!(std::fs::read_to_string(&file_tracked).unwrap(), "original\n");
+        assert!(GitManager::get_worktree_diff(&path).unwrap().is_empty());
+
+        // Test invalid paths
+        assert!(GitManager::rollback_file(&path, "../escape").is_err());
+        assert!(GitManager::rollback_file(&path, "--flag").is_err());
+
+        // Test reset_worktree (reset all)
+        std::fs::write(&file_tracked, "will be reset\n").unwrap();
+        std::fs::write(&file_untracked, "will be cleaned\n").unwrap();
+        assert_eq!(GitManager::get_worktree_diff(&path).unwrap().len(), 2);
+        GitManager::reset_worktree(&path).unwrap();
+        assert_eq!(std::fs::read_to_string(&file_tracked).unwrap(), "original\n");
+        assert!(!file_untracked.exists());
+        assert!(GitManager::get_worktree_diff(&path).unwrap().is_empty());
     }
 }

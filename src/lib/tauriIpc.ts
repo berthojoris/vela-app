@@ -141,6 +141,16 @@ export const tauriIpc = {
     return await invoke<string>('commit_worktree', { worktreePath, message });
   },
 
+  async rollbackWorktreeFile(worktreePath: string, filePath: string): Promise<void> {
+    if (!isTauri()) return;
+    await invoke('rollback_worktree_file', { worktreePath, filePath });
+  },
+
+  async resetWorktree(worktreePath: string): Promise<void> {
+    if (!isTauri()) return;
+    await invoke('reset_worktree', { worktreePath });
+  },
+
   async getShellProfiles(): Promise<ShellProfile[]> {
     if (!isTauri()) {
       return [

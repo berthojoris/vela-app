@@ -51,7 +51,12 @@ impl AgentSupervisor {
                 id: "pwsh".to_string(),
                 name: "PowerShell 7".to_string(),
                 executable: "pwsh.exe".to_string(),
-                args: vec!["-NoLogo".to_string()],
+                args: vec![
+                    "-NoLogo".to_string(),
+                    "-NoExit".to_string(),
+                    "-Command".to_string(),
+                    "Set-Alias -Name oc -Value opencode".to_string(),
+                ],
                 is_agent: false,
                 agent_type: None,
             });
@@ -60,7 +65,12 @@ impl AgentSupervisor {
                 id: "powershell".to_string(),
                 name: "Windows PowerShell".to_string(),
                 executable: "powershell.exe".to_string(),
-                args: vec!["-NoLogo".to_string()],
+                args: vec![
+                    "-NoLogo".to_string(),
+                    "-NoExit".to_string(),
+                    "-Command".to_string(),
+                    "Set-Alias -Name oc -Value opencode".to_string(),
+                ],
                 is_agent: false,
                 agent_type: None,
             });

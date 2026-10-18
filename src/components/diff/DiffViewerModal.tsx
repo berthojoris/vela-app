@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useDiffStore } from '../../stores/useDiffStore';
+import { useWorktreeStore } from '../../stores/useWorktreeStore';
 import { useDialog } from '../../lib/useDialog';
+import { FileDiff } from '../../types';
 import {
   X,
   GitCommit,
@@ -14,6 +16,7 @@ import {
   Copy,
   Loader2,
   FolderGit2,
+  RotateCcw,
 } from 'lucide-react';
 
 export const DiffViewerModal: React.FC = () => {
@@ -24,8 +27,11 @@ export const DiffViewerModal: React.FC = () => {
     selectedFile,
     isLoading,
     isCommitting,
+    isRollingBack,
+    rollingBackFile,
     error,
     commitError,
+    rollbackError,
     commitMessage,
     commitResult,
     closeDiffModal,
@@ -33,23 +39,44 @@ export const DiffViewerModal: React.FC = () => {
     setCommitMessage,
     refreshDiffs,
     commit,
+    rollbackFile,
+    resetAll,
     clearCommitError,
+    clearRollbackError,
   } = useDiffStore();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [copied, setCopied] = useState(false);
+  const [fileToRollback, setFileToRollback] = useState<FileDiff | null>(null);
+  const [confirmResetAll, setConfirmResetAll] = useState(false);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const dialogRef = useDialog(isOpen, closeDiffModal, isCommitting);
+  const dialogRef = useDialog(isOpen, closeDiffModal, isCommitting || isRollingBack);
   useEffect(() => () => clearTimeout(copyTimer.current), []);
 
 
-  // Reset search when modal opens/closes
+  // Reset search and confirmation modals when modal opens/closes
   useEffect(() => {
     if (!isOpen) {
       setSearchQuery('');
       setCopied(false);
+      setFileToRollback(null);
+      setConfirmResetAll(false);
     }
   }, [isOpen]);
+
+  // Intercept Escape key when a confirmation dialog is active
+  useEffect(() => {
+    if (!fileToRollback && !confirmResetAll) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        setFileToRollback(null);
+        setConfirmResetAll(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [fileToRollback, confirmResetAll]);
 
   // Filter diffs based on search query
   const filteredDiffs = useMemo(() => {
@@ -145,8 +172,18 @@ export const DiffViewerModal: React.FC = () => {
 
           <div className="flex items-center gap-1.5">
             <button
+              onClick={() => setConfirmResetAll(true)}
+              disabled={isLoading || isCommitting || isRollingBack || diffs.length === 0}
+              className="h-7 px-2.5 rounded hover:bg-orca-rose/15 text-orca-rose/85 hover:text-orca-rose flex items-center gap-1.5 transition-colors border border-orca-rose/30 hover:border-orca-rose/50 disabled:opacity-30 disabled:pointer-events-none"
+              title="Reset / rollback all changes in this worktree"
+            >
+              <RotateCcw className={`w-3.5 h-3.5 ${isRollingBack && !rollingBackFile ? 'animate-spin' : ''}`} />
+              <span className="text-[11px] font-medium hidden sm:inline">Reset All</span>
+            </button>
+
+            <button
               onClick={() => refreshDiffs()}
-              disabled={isLoading || isCommitting}
+              disabled={isLoading || isCommitting || isRollingBack}
               className="h-7 px-2 rounded hover:bg-orca-hover text-orca-muted hover:text-white flex items-center gap-1 transition-colors border border-transparent hover:border-orca-border disabled:opacity-40"
               title="Refresh changes"
             >
@@ -156,7 +193,7 @@ export const DiffViewerModal: React.FC = () => {
 
             <button
               onClick={closeDiffModal}
-              disabled={isCommitting}
+              disabled={isCommitting || isRollingBack}
               className="w-7 h-7 rounded hover:bg-orca-hover text-orca-muted hover:text-white flex items-center justify-center transition-colors"
               title="Close (Esc)"
             >
@@ -195,6 +232,25 @@ export const DiffViewerModal: React.FC = () => {
             </div>
             <button
               onClick={clearCommitError}
+              className="text-orca-muted hover:text-white p-1 rounded"
+              title="Dismiss error"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
+        {/* Rollback Error Banner */}
+        {rollbackError && (
+          <div className="px-4 py-2 bg-orca-rose/15 border-b border-orca-rose/30 flex items-center gap-2.5 justify-between">
+            <div className="flex items-center gap-2 truncate">
+              <AlertCircle className="w-4 h-4 text-orca-rose shrink-0" />
+              <span className="font-mono text-[11px] text-rose-300 truncate" title={rollbackError}>
+                Rollback failed: {rollbackError}
+              </span>
+            </div>
+            <button
+              onClick={clearRollbackError}
               className="text-orca-muted hover:text-white p-1 rounded"
               title="Dismiss error"
             >
@@ -274,12 +330,26 @@ export const DiffViewerModal: React.FC = () => {
                       ? `FILTERED (${filteredDiffs.length}/${diffs.length})`
                       : `CHANGED FILES (${diffs.length})`}
                   </span>
-                  {isLoading && (
-                    <span className="flex items-center gap-1 text-orca-accent">
-                      <Loader2 className="w-2.5 h-2.5 animate-spin" />
-                      updating
-                    </span>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {diffs.length > 0 && !searchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setConfirmResetAll(true)}
+                        disabled={isLoading || isCommitting || isRollingBack}
+                        className="text-[10px] text-orca-muted hover:text-orca-rose flex items-center gap-1 transition-colors disabled:opacity-40"
+                        title="Reset all changes in worktree"
+                      >
+                        <RotateCcw className="w-2.5 h-2.5" />
+                        <span>reset all</span>
+                      </button>
+                    )}
+                    {isLoading && (
+                      <span className="flex items-center gap-1 text-orca-accent">
+                        <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                        updating
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 {/* File List Items */}
@@ -295,13 +365,13 @@ export const DiffViewerModal: React.FC = () => {
                       <div
                         key={file.path}
                         onClick={() => selectFile(file)}
-                        className={`px-2 py-1.5 rounded flex items-center justify-between cursor-pointer transition-colors ${
+                        className={`group px-2 py-1.5 rounded flex items-center justify-between cursor-pointer transition-colors ${
                           isSelected
                             ? 'bg-orca-accent/20 border border-orca-accent/40 text-white font-medium'
                             : 'hover:bg-orca-hover text-orca-text border border-transparent'
                         }`}
                       >
-                        <div className="flex items-center gap-2 min-w-0 pr-1">
+                        <div className="flex items-center gap-2 min-w-0 pr-1 flex-1">
                           <span
                             className={`text-[9px] font-mono font-bold px-1 py-0.5 rounded border leading-none shrink-0 ${badge.color}`}
                             title={`Status: ${file.status}`}
@@ -316,13 +386,29 @@ export const DiffViewerModal: React.FC = () => {
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-1 font-mono text-[10px] shrink-0">
+                        <div className="flex items-center gap-1.5 font-mono text-[10px] shrink-0">
                           {file.additions > 0 && (
                             <span className="text-orca-emerald">+{file.additions}</span>
                           )}
                           {file.deletions > 0 && (
                             <span className="text-orca-rose">-{file.deletions}</span>
                           )}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setFileToRollback(file);
+                            }}
+                            disabled={isLoading || isCommitting || isRollingBack}
+                            className="w-5 h-5 rounded flex items-center justify-center text-orca-muted hover:text-orca-rose hover:bg-orca-rose/20 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-all border border-transparent hover:border-orca-rose/30 disabled:opacity-30"
+                            title={`Rollback changes in ${fileName}`}
+                          >
+                            {isRollingBack && rollingBackFile === file.path ? (
+                              <Loader2 className="w-3 h-3 animate-spin text-orca-rose" />
+                            ) : (
+                              <RotateCcw className="w-3 h-3" />
+                            )}
+                          </button>
                         </div>
                       </div>
                     );
@@ -367,6 +453,20 @@ export const DiffViewerModal: React.FC = () => {
                           title="Copy file path"
                         >
                           {copied ? <Check className="w-3 h-3 text-orca-emerald" /> : <Copy className="w-3 h-3" />}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setFileToRollback(selectedFile)}
+                          disabled={isLoading || isCommitting || isRollingBack}
+                          className="h-5 px-1.5 rounded text-orca-rose/90 hover:text-orca-rose hover:bg-orca-rose/15 flex items-center gap-1 transition-colors border border-orca-rose/30 hover:border-orca-rose/50 disabled:opacity-40 ml-1 text-[10px] font-sans font-medium"
+                          title={`Rollback changes in ${selectedFile.path}`}
+                        >
+                          {isRollingBack && rollingBackFile === selectedFile.path ? (
+                            <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                          ) : (
+                            <RotateCcw className="w-2.5 h-2.5" />
+                          )}
+                          <span>Rollback</span>
                         </button>
                       </div>
 
@@ -484,6 +584,128 @@ export const DiffViewerModal: React.FC = () => {
             Commit mencakup semua perubahan di worktree ini: file tracked, perubahan staged/unstaged, dan file untracked yang tidak di-ignore.
           </p>
         </form>
+
+        {/* Rollback File Confirmation Modal */}
+        {fileToRollback && (
+          <div className="fixed inset-0 z-[60] bg-black/80 flex items-center justify-center p-4">
+            <div
+              role="alertdialog"
+              aria-modal="true"
+              aria-labelledby="rollback-file-title"
+              className="w-full max-w-md p-5 bg-orca-darker border border-orca-border rounded-xl text-xs space-y-3.5"
+            >
+              <div className="flex items-center gap-2 text-rose-400 font-semibold text-sm">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span id="rollback-file-title">Rollback File Changes</span>
+              </div>
+              <p className="text-orca-text leading-relaxed">
+                Apakah Anda yakin ingin membatalkan semua perubahan pada file ini?
+              </p>
+              <div className="p-2 rounded bg-orca-darkest border border-orca-border font-mono text-[11px] text-white truncate" title={fileToRollback.path}>
+                {fileToRollback.path}
+              </div>
+              <p className="text-orca-muted text-[11px] leading-relaxed">
+                Perubahan pada file yang sudah dimodifikasi akan dikembalikan ke status commit terakhir (HEAD), dan file baru yang belum pernah di-commit akan dihapus permanen. Tindakan ini <strong className="text-rose-400 font-medium">tidak dapat dibatalkan</strong>.
+              </p>
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  disabled={isRollingBack}
+                  onClick={() => setFileToRollback(null)}
+                  className="px-3 py-1.5 rounded-md border border-orca-border hover:bg-orca-hover text-orca-text transition-colors disabled:opacity-40"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  disabled={isRollingBack}
+                  onClick={async () => {
+                    const target = fileToRollback.path;
+                    try {
+                      await rollbackFile(target);
+                      setFileToRollback(null);
+                      void useWorktreeStore.getState().refreshWorktrees(true);
+                    } catch {
+                      // Error is captured in store and displayed in banner
+                    }
+                  }}
+                  className="px-3 py-1.5 rounded-md border border-orca-rose/50 bg-orca-rose/25 hover:bg-orca-rose/35 text-rose-200 font-semibold flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                >
+                  {isRollingBack ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Mengembalikan...</span>
+                    </>
+                  ) : (
+                    <>
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      <span>Rollback File</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Reset All Changes Confirmation Modal */}
+        {confirmResetAll && (
+          <div className="fixed inset-0 z-[60] bg-black/80 flex items-center justify-center p-4">
+            <div
+              role="alertdialog"
+              aria-modal="true"
+              aria-labelledby="reset-all-title"
+              className="w-full max-w-md p-5 bg-orca-darker border border-orca-border rounded-xl text-xs space-y-3.5"
+            >
+              <div className="flex items-center gap-2 text-rose-400 font-semibold text-sm">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span id="reset-all-title">Reset / Rollback Semua Perubahan</span>
+              </div>
+              <p className="text-orca-text leading-relaxed">
+                Apakah Anda yakin ingin membatalkan semua perubahan pada seluruh <strong className="text-white">{diffs.length} file</strong> di worktree ini?
+              </p>
+              <p className="text-orca-muted text-[11px] leading-relaxed">
+                Semua perubahan file tracked (staged maupun unstaged) akan di-reset ke HEAD, dan semua untracked file akan dihapus permanen. Tindakan ini <strong className="text-rose-400 font-medium">tidak dapat dibatalkan</strong>.
+              </p>
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  disabled={isRollingBack}
+                  onClick={() => setConfirmResetAll(false)}
+                  className="px-3 py-1.5 rounded-md border border-orca-border hover:bg-orca-hover text-orca-text transition-colors disabled:opacity-40"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  disabled={isRollingBack}
+                  onClick={async () => {
+                    try {
+                      await resetAll();
+                      setConfirmResetAll(false);
+                      void useWorktreeStore.getState().refreshWorktrees(true);
+                    } catch {
+                      // Error is captured in store and displayed in banner
+                    }
+                  }}
+                  className="px-3 py-1.5 rounded-md border border-orca-rose/50 bg-orca-rose/25 hover:bg-orca-rose/35 text-rose-200 font-semibold flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                >
+                  {isRollingBack ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Mereset...</span>
+                    </>
+                  ) : (
+                    <>
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      <span>Reset Semua Perubahan</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

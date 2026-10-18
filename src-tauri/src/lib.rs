@@ -183,6 +183,23 @@ async fn commit_worktree(worktree_path: String, message: String) -> Result<Strin
 }
 
 #[tauri::command]
+async fn rollback_worktree_file(
+    worktree_path: String,
+    file_path: String,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || GitManager::rollback_file(&worktree_path, &file_path))
+        .await
+        .map_err(|e| format!("Task execution error: {}", e))?
+}
+
+#[tauri::command]
+async fn reset_worktree(worktree_path: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || GitManager::reset_worktree(&worktree_path))
+        .await
+        .map_err(|e| format!("Task execution error: {}", e))?
+}
+
+#[tauri::command]
 fn get_shell_profiles() -> Result<Vec<ShellProfile>, String> {
     Ok(AgentSupervisor::get_shell_profiles())
 }
@@ -321,6 +338,8 @@ pub fn run() {
             remove_worktree,
             get_worktree_diff,
             commit_worktree,
+            rollback_worktree_file,
+            reset_worktree,
             get_shell_profiles,
             detect_agents,
             toggle_maximize,

@@ -10,8 +10,11 @@ interface DiffState {
   selectedFile: FileDiff | null;
   isLoading: boolean;
   isCommitting: boolean;
+  isRollingBack: boolean;
+  rollingBackFile: string | null;
   error: string | null;
   commitError: string | null;
+  rollbackError: string | null;
   commitMessage: string;
   commitResult: string | null;
   openDiffModal: (path: string) => Promise<void>;
@@ -20,7 +23,10 @@ interface DiffState {
   setCommitMessage: (msg: string) => void;
   refreshDiffs: () => Promise<void>;
   commit: () => Promise<string>;
+  rollbackFile: (filePath: string) => Promise<void>;
+  resetAll: () => Promise<void>;
   clearCommitError: () => void;
+  clearRollbackError: () => void;
   clearAllErrors: () => void;
 }
 
@@ -33,25 +39,29 @@ export const useDiffStore = create<DiffState>((set, get) => ({
   selectedFile: null,
   isLoading: false,
   isCommitting: false,
+  isRollingBack: false,
+  rollingBackFile: null,
   error: null,
   commitError: null,
+  rollbackError: null,
   commitMessage: '',
   commitResult: null,
 
   openDiffModal: async (path) => {
-    // A commit is not cancellable: keep its target and message visible until it finishes.
-    if (get().isCommitting) return;
+    // A commit or rollback is not cancellable: keep its target and message visible until it finishes.
+    if (get().isCommitting || get().isRollingBack) return;
     ++requestSequence;
     set({
       isOpen: true, worktreePath: path, diffs: [], selectedFile: null,
-      isLoading: false, error: null, commitError: null, commitMessage: '', commitResult: null,
+      isLoading: false, isRollingBack: false, rollingBackFile: null,
+      error: null, commitError: null, rollbackError: null, commitMessage: '', commitResult: null,
     });
     await get().refreshDiffs();
   },
 
   refreshDiffs: async () => {
-    const { worktreePath, isOpen, isCommitting } = get();
-    if (!worktreePath || !isOpen || isCommitting) return;
+    const { worktreePath, isOpen, isCommitting, isRollingBack } = get();
+    if (!worktreePath || !isOpen || isCommitting || isRollingBack) return;
     const request = ++requestSequence;
     const current = () => request === requestSequence && get().isOpen && get().worktreePath === worktreePath;
     set({ isLoading: true, error: null });
@@ -70,11 +80,12 @@ export const useDiffStore = create<DiffState>((set, get) => ({
   },
 
   closeDiffModal: () => {
-    if (get().isCommitting) return;
+    if (get().isCommitting || get().isRollingBack) return;
     ++requestSequence;
     set({
       isOpen: false, worktreePath: null, diffs: [], selectedFile: null,
-      isLoading: false, error: null, commitError: null, commitMessage: '', commitResult: null,
+      isLoading: false, isRollingBack: false, rollingBackFile: null,
+      error: null, commitError: null, rollbackError: null, commitMessage: '', commitResult: null,
     });
   },
   selectFile: (file) => {
@@ -85,13 +96,14 @@ export const useDiffStore = create<DiffState>((set, get) => ({
     if (!get().isCommitting) set({ commitMessage, commitError: null });
   },
   clearCommitError: () => set({ commitError: null }),
-  clearAllErrors: () => set({ error: null, commitError: null }),
+  clearRollbackError: () => set({ rollbackError: null }),
+  clearAllErrors: () => set({ error: null, commitError: null, rollbackError: null }),
 
   commit: async () => {
     const state = get();
     const worktreePath = state.worktreePath;
     const message = state.commitMessage.trim();
-    if (state.isCommitting) throw new Error('A commit is already running. Please wait.');
+    if (state.isCommitting || state.isRollingBack) throw new Error('A Git operation is already running. Please wait.');
     if (!state.isOpen || !worktreePath || state.isLoading || state.error || !state.diffs.length) {
       throw new Error('Refresh and review the current worktree before committing.');
     }
@@ -110,5 +122,49 @@ export const useDiffStore = create<DiffState>((set, get) => ({
     set({ isCommitting: false, commitMessage: '', commitResult: result });
     await get().refreshDiffs();
     return result;
+  },
+
+  rollbackFile: async (filePath: string) => {
+    const state = get();
+    const worktreePath = state.worktreePath;
+    if (state.isCommitting || state.isRollingBack) {
+      throw new Error('Another Git operation is already in progress. Please wait.');
+    }
+    if (!state.isOpen || !worktreePath || state.isLoading) {
+      throw new Error('Refresh and review the current worktree before rolling back.');
+    }
+    ++requestSequence;
+    set({ isRollingBack: true, rollingBackFile: filePath, rollbackError: null });
+    try {
+      await tauriIpc.rollbackWorktreeFile(worktreePath, filePath);
+    } catch (error) {
+      const detail = errorMessage(error, `Git could not rollback ${filePath}.`);
+      set({ isRollingBack: false, rollingBackFile: null, rollbackError: detail });
+      throw new Error(detail);
+    }
+    set({ isRollingBack: false, rollingBackFile: null });
+    await get().refreshDiffs();
+  },
+
+  resetAll: async () => {
+    const state = get();
+    const worktreePath = state.worktreePath;
+    if (state.isCommitting || state.isRollingBack) {
+      throw new Error('Another Git operation is already in progress. Please wait.');
+    }
+    if (!state.isOpen || !worktreePath || state.isLoading) {
+      throw new Error('Refresh and review the current worktree before resetting.');
+    }
+    ++requestSequence;
+    set({ isRollingBack: true, rollingBackFile: null, rollbackError: null });
+    try {
+      await tauriIpc.resetWorktree(worktreePath);
+    } catch (error) {
+      const detail = errorMessage(error, 'Git could not reset changes in this worktree.');
+      set({ isRollingBack: false, rollbackError: detail });
+      throw new Error(detail);
+    }
+    set({ isRollingBack: false });
+    await get().refreshDiffs();
   },
 }));
