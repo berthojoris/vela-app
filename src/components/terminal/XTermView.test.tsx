@@ -8,6 +8,7 @@ const state = vi.hoisted(() => ({
   input: null as null | ((data: string) => void),
   exit: null as null | ((code: number | null) => void),
   osc: null as null | ((data: string) => boolean),
+  keyHandler: null as null | ((e: KeyboardEvent) => boolean),
   callbacks: [] as (() => void)[],
 }));
 const ipc = vi.hoisted(() => ({
@@ -18,7 +19,8 @@ vi.mock('../../lib/tauriIpc', () => ({ tauriIpc: ipc }));
 vi.mock('@xterm/xterm', () => ({ Terminal: class {
   cols = 80; rows = 24;
   parser = { registerOscHandler: (_: number, callback: (data: string) => boolean) => { state.osc = callback; return { dispose() {} }; } };
-  loadAddon() {} open() {} focus() {} dispose() {} attachCustomKeyEventHandler() {} writeln() {}
+  loadAddon() {} open() {} focus() {} dispose() {} writeln() {}
+  attachCustomKeyEventHandler(handler: (e: KeyboardEvent) => boolean) { state.keyHandler = handler; }
   onData(callback: (data: string) => void) { state.input = callback; return { dispose() {} }; }
   write(_: Uint8Array, callback: () => void) { state.callbacks.push(callback); }
 } }));
@@ -103,3 +105,32 @@ it('leaves text pastes to the browser instead of synthesizing a key', async () =
   pasteWith(target, 'ls -la', [{ kind: 'string', type: 'text/plain' }]);
   expect(ipc.writeTerminal).not.toHaveBeenCalled();
 });
+
+it('intercepts Shift+Enter to send a Shift+Enter key record carrying a newline', async () => {
+  render(<XTermView sessionId="test" isActive />);
+  await waitFor(() => expect(ipc.startTerminalOutput).toHaveBeenCalled());
+  expect(state.keyHandler).toBeTypeOf('function');
+  const event = new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true, cancelable: true });
+  const handled = state.keyHandler!(event);
+  expect(handled).toBe(false);
+  expect(event.defaultPrevented).toBe(true);
+  await waitFor(() =>
+    expect(ipc.writeTerminal).toHaveBeenCalledWith(
+      'test',
+      '\x1b[13;28;10;1;16;1_\x1b[13;28;10;0;16;1_'
+    )
+  );
+  expect(state.keyHandler!(new KeyboardEvent('keyup', { key: 'Enter', shiftKey: true }))).toBe(false);
+  expect(ipc.writeTerminal).toHaveBeenCalledTimes(1);
+});
+
+it('sends Escape as a Win32 key record so ConPTY cannot drop a bare ESC', async () => {
+  render(<XTermView sessionId="test" isActive />);
+  await waitFor(() => expect(ipc.startTerminalOutput).toHaveBeenCalled());
+  expect(state.keyHandler!(new KeyboardEvent('keydown', { key: 'Escape' }))).toBe(false);
+  expect(state.keyHandler!(new KeyboardEvent('keyup', { key: 'Escape' }))).toBe(false);
+  await waitFor(() => expect(ipc.writeTerminal).toHaveBeenCalledWith('test', '\x1b[27;1;27;1;0;1_\x1b[27;1;27;0;0;1_'));
+  expect(ipc.writeTerminal).toHaveBeenCalledTimes(1);
+  expect(state.keyHandler!(new KeyboardEvent('keydown', { key: 'Escape', isComposing: true }))).toBe(true);
+});
+

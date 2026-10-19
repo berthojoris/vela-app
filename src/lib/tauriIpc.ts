@@ -9,6 +9,7 @@ import {
   GitWorktree,
   ShellProfile,
   TerminalSession,
+  WorktreeChanges,
 } from '../types';
 
 export const isTauri = () => {
@@ -139,6 +140,11 @@ export const tauriIpc = {
   async getWorktreeDiff(worktreePath: string): Promise<FileDiff[]> {
     if (!isTauri()) return [];
     return await invoke<FileDiff[]>('get_worktree_diff', { worktreePath });
+  },
+
+  async getWorktreeChanges(worktreePath: string): Promise<WorktreeChanges> {
+    if (!isTauri()) return { total: 0, files: [] };
+    return await invoke<WorktreeChanges>('get_worktree_changes', { worktreePath });
   },
 
   async commitWorktree(worktreePath: string, message: string): Promise<string> {

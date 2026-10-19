@@ -68,6 +68,22 @@ pub struct FileDiff {
     pub diff_content: String,
 }
 
+/// Lightweight changed-file entry for the sidebar: status and line counts, no patch text.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ChangedFile {
+    pub path: String,
+    pub status: String,
+    pub additions: usize,
+    pub deletions: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct WorktreeChanges {
+    /// All changed entries reported by git status; `files` may be capped below this.
+    pub total: usize,
+    pub files: Vec<ChangedFile>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ShellProfile {
     pub id: String,

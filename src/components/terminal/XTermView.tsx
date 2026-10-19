@@ -156,6 +156,45 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive }) => 
       ) {
         return false;
       }
+      // Intercept Shift+Enter: xterm's default '\r' submits the prompt. Send a Win32 key
+      // record for Shift+Enter carrying '\n' instead. ConPTY gives console-API readers
+      // (PSReadLine AddLine, Codex) a real Shift+Enter and VT readers (Claude Code,
+      // OpenCode, Droid, Antigravity) a '\n'; both insert a line break. A bare '\n'
+      // arrives at console readers as Ctrl+Enter, which Codex ignores, and a Shift+Enter
+      // record carrying '\r' reaches VT readers as plain Enter.
+      // Calling preventDefault and stopPropagation ensures the browser does not insert text into
+      // xterm's hidden textarea (which would trigger secondary onData emissions).
+      const isEnter =
+        e.key === 'Enter' ||
+        e.code === 'Enter' ||
+        e.code === 'NumpadEnter' ||
+        e.keyCode === 13;
+      if (
+        isEnter &&
+        e.shiftKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !e.metaKey &&
+        !e.isComposing
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.type === 'keydown') {
+          void sendInput('\x1b[13;28;10;1;16;1_\x1b[13;28;10;0;16;1_');
+        }
+        return false;
+      }
+      // Encode Escape as a Win32 key record so ConPTY delivers it as VK_ESCAPE
+      // even if win32-input-mode was activated. Leave IME composition alone so Escape can cancel it.
+      if (e.key === 'Escape' && !e.metaKey && !e.isComposing) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.type === 'keydown') {
+          const modifiers = (e.shiftKey ? 0x10 : 0) | (e.ctrlKey ? 0x08 : 0) | (e.altKey ? 0x02 : 0);
+          void sendInput(`\x1b[27;1;27;1;${modifiers};1_\x1b[27;1;27;0;${modifiers};1_`);
+        }
+        return false;
+      }
       return true;
     });
 

@@ -17,6 +17,7 @@ import { useWorktreeStore } from '../../stores/useWorktreeStore';
 import { useTerminalStore } from '../../stores/useTerminalStore';
 import { useDiffStore } from '../../stores/useDiffStore';
 import { TerminalIcon } from '../terminal/TerminalIcon';
+import { ChangedFilesPanel } from './ChangedFilesPanel';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { errorMessage } from '../../lib/errors';
 import { useNoticeStore } from '../../stores/useNoticeStore';
@@ -57,6 +58,7 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
 
   const activeSession = sessions.find((s) => s.id === activeSessionId);
   const currentCwd = activeSession?.cwd || activeSessionCwd;
+  const activeWorktree = repoPath ? worktrees.find((wt) => wt.id === activeWorktreeId) : undefined;
 
   const handleOpenDirectory = async () => {
     if (!currentCwd || openingDirectory) return;
@@ -292,7 +294,7 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
           </div>
         )}
 
-        <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
+        <div className={`${activeWorktree ? 'shrink-0 max-h-[45%]' : 'flex-1'} overflow-y-auto p-2 space-y-1.5`}>
           {repoPath ? (
             worktrees.length > 0 ? (
               worktrees.map((wt) => {
@@ -419,6 +421,14 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
             </div>
           )}
         </div>
+
+        {activeWorktree && (
+          <ChangedFilesPanel
+            worktreePath={activeWorktree.path}
+            branch={activeWorktree.branch}
+            refreshKey={worktrees}
+          />
+        )}
       </div>
 
       {/* Footer actions */}

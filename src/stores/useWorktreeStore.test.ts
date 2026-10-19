@@ -114,4 +114,27 @@ describe('autoGitStatus setting and tab switching behavior', () => {
     expect(store.getState().activeWorktreeId).toBe('B');
     expect(ipc.listWorktrees).toHaveBeenCalledWith('C:/A', true);
   });
+
+  it('clears isLoading when a fast-path tab switch supersedes a slow repository sync', async () => {
+    store.setState({
+      repoPath: 'C:/A',
+      worktrees: [worktree('A', 'C:/A')],
+      activeWorktreeId: 'A',
+      autoGitStatus: false,
+    });
+    const stale = deferred<string | null>();
+    ipc.findGitRepo.mockReturnValueOnce(stale.promise);
+    const pending = store.getState().syncWithSession({ cwd: 'C:/B' });
+    expect(store.getState().isLoading).toBe(true);
+
+    await store.getState().syncWithSession({ cwd: 'C:/A' });
+    expect(store.getState().activeWorktreeId).toBe('A');
+    expect(store.getState().isLoading).toBe(false);
+
+    stale.resolve('C:/B');
+    await pending;
+    expect(store.getState().repoPath).toBe('C:/A');
+    expect(store.getState().worktrees.map((item) => item.id)).toEqual(['A']);
+    expect(ipc.listWorktrees).not.toHaveBeenCalled();
+  });
 });

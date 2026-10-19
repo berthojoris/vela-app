@@ -28,5 +28,22 @@ describe('detectTerminalType', () => {
     expect(detectTerminalType({ shell: 'cmd.exe' })).toBe('cmd');
     expect(detectTerminalType({ shell: 'wsl.exe' })).toBe('wsl');
     expect(detectTerminalType({ isAgent: true, agentType: 'claude_code' })).toBe('claude');
+    expect(detectTerminalType({ isAgent: true, title: 'Codex' })).toBe('codex');
+    expect(detectTerminalType({ isAgent: false, shell: 'codex' })).toBe('codex');
+  });
+
+  it('ignores the branch or folder that formatTabTitle appends', () => {
+    for (const folder of ['android-app', 'strategy', 'opencode-fork', 'claude-notes', 'my-codex']) {
+      expect(detectTerminalType({ shell: 'powershell.exe', title: `PowerShell (${folder})`, isAgent: false, agentType: null })).toBe('powershell');
+    }
+    expect(detectTerminalType({ shell: 'cmd.exe', title: 'Command Prompt (android)' })).toBe('cmd');
+    expect(detectTerminalType({ shell: 'powershell.exe', title: 'OpenCode (android)', isAgent: true, agentType: 'open_code' })).toBe('opencode');
+    expect(detectTerminalType({ shell: 'powershell.exe', title: 'Droid CLI (strategy)', isAgent: true, agentType: 'droid_cli' })).toBe('droid');
+  });
+
+  it('trusts the executable over a renamed tab title', () => {
+    expect(detectTerminalType({ shell: 'C:/Program Files/PowerShell/7/pwsh.exe', title: 'OpenCode' })).toBe('powershell');
+    expect(detectTerminalType({ shell: 'C:\\Users\\me\\bin\\droid.exe', title: 'PowerShell' })).toBe('droid');
+    expect(detectTerminalType({ isAgent: true, agentType: { custom: 'agy' } })).toBe('antigravity');
   });
 });

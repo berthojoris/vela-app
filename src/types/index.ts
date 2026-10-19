@@ -49,6 +49,20 @@ export interface FileDiff {
   diff_content: string;
 }
 
+/** Lightweight changed-file entry for the sidebar: status and line counts, no patch text. */
+export interface ChangedFile {
+  path: string;
+  status: string; // git porcelain XY, trimmed: "M", "A", "D", "R", "??", ...
+  additions: number;
+  deletions: number;
+}
+
+export interface WorktreeChanges {
+  /** All changed entries reported by git status; `files` may be capped below this. */
+  total: number;
+  files: ChangedFile[];
+}
+
 export interface ShellProfile {
   id: string;
   name: string;

@@ -54,6 +54,20 @@ describe('safe launch defaults', () => {
     await store.getState().createSession({ shell: 'claude', isAgent: true });
     expect(ipc.spawnTerminal.mock.calls[0][0].args).toEqual([]);
   });
+  it('keeps a PowerShell tab from inheriting an agent profile that shares its executable', async () => {
+    store.setState({ profiles: [
+      { id: 'agent-opencode', name: 'OpenCode', executable: 'powershell.exe', args: ['-NoLogo', '-NoExit', '-Command', 'opencode'], is_agent: true, agent_type: 'open_code' },
+      { id: 'powershell', name: 'Windows PowerShell', executable: 'powershell.exe', args: ['-NoLogo'], is_agent: false, agent_type: null },
+    ] });
+    ipc.spawnTerminal.mockImplementation(async (params) => ({ ...session(params.id), shell: params.shell }));
+    await store.getState().createSession({ shell: 'powershell.exe', args: ['-NoLogo'], isAgent: false, agentType: null });
+    await store.getState().createSession({ shell: 'powershell.exe' });
+    for (const [params] of ipc.spawnTerminal.mock.calls) {
+      expect(params.agentType).toBeNull();
+      expect(params.isAgent).toBe(false);
+      expect(params.args).toEqual(['-NoLogo']);
+    }
+  });
   it('does not insert a phantom session after failed startup', async () => {
     ipc.spawnTerminal.mockRejectedValue('Directory missing');
     await expect(store.getState().createSession()).rejects.toBe('Directory missing');

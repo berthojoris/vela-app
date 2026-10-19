@@ -13,7 +13,10 @@ pub mod pty;
 
 use agent::supervisor::AgentSupervisor;
 use git::worktree::GitManager;
-use models::{AgentType, DetectedAgent, FileDiff, GitWorktree, ShellProfile, TerminalSession};
+use models::{
+    AgentType, DetectedAgent, FileDiff, GitWorktree, ShellProfile, TerminalSession,
+    WorktreeChanges,
+};
 use pty::manager::PtyManager;
 use tauri::{AppHandle, Manager, State, Window};
 
@@ -175,6 +178,13 @@ async fn remove_worktree(
 #[tauri::command]
 async fn get_worktree_diff(worktree_path: String) -> Result<Vec<FileDiff>, String> {
     tokio::task::spawn_blocking(move || GitManager::get_worktree_diff(&worktree_path))
+        .await
+        .map_err(|e| format!("Task execution error: {}", e))?
+}
+
+#[tauri::command]
+async fn get_worktree_changes(worktree_path: String) -> Result<WorktreeChanges, String> {
+    tokio::task::spawn_blocking(move || GitManager::get_worktree_changes(&worktree_path))
         .await
         .map_err(|e| format!("Task execution error: {}", e))?
 }
@@ -377,6 +387,7 @@ pub fn run() {
             create_worktree,
             remove_worktree,
             get_worktree_diff,
+            get_worktree_changes,
             commit_worktree,
             rollback_worktree_file,
             reset_worktree,

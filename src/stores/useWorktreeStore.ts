@@ -97,7 +97,9 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
         return normCwd === path || normCwd.startsWith(`${path}/`);
       });
       if (matched) {
-        set({ activeSessionCwd: cwd, activeWorktreeId: matched.id });
+        // Clearing isLoading matters when this fast path supersedes an in-flight slow repo sync:
+        // the stale sync bails on its sequence guard and would otherwise leave the spinner stuck.
+        set({ activeSessionCwd: cwd, activeWorktreeId: matched.id, isLoading: false });
         if (previous.autoGitStatus) {
           void get().refreshWorktrees(true);
         }

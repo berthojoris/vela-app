@@ -58,9 +58,16 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       profiles.find((p) => p.id === defaultProfileId) || profiles[0];
 
     const shell = params.shell || selectedProfile?.executable || 'powershell.exe';
-    const shellProfile = profiles.find(
-      (profile) => profile.executable.toLowerCase() === shell.toLowerCase()
-    );
+    // Agent profiles reuse the shell executable (OpenCode runs in powershell.exe),
+    // so match on agent-ness too; otherwise a PowerShell tab inherits OpenCode's
+    // agent type and arguments.
+    const shellProfile = params.shell
+      ? profiles.find(
+          (profile) =>
+            profile.executable.toLowerCase() === shell.toLowerCase() &&
+            profile.is_agent === (params.isAgent ?? false)
+        )
+      : selectedProfile;
     const args =
       params.args ??
       shellProfile?.args ??
@@ -85,7 +92,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       rows: 24,
       worktreeId: params.worktreeId,
       isAgent,
-      agentType: params.agentType ?? shellProfile?.agent_type,
+      // An explicit null means "not an agent"; only fall back when it was omitted.
+      agentType: params.agentType !== undefined ? params.agentType : shellProfile?.agent_type,
     });
 
     set((state) => ({

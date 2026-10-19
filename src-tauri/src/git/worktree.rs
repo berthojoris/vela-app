@@ -1,4 +1,4 @@
-use crate::models::{FileDiff, GitWorktree};
+use crate::models::{ChangedFile, FileDiff, GitWorktree, WorktreeChanges};
 use crate::process::{hidden_command, output};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -335,6 +335,61 @@ impl GitManager {
         )?)?;
         Ok(parse_status(&result.stdout))
     }
+    fn has_head(path: &str) -> Result<bool, String> {
+        Ok(Self::run(
+            Self::git_cmd().args(["-C", path, "rev-parse", "--verify", "HEAD"]),
+            64 * 1024,
+        )?
+        .status
+        .success())
+    }
+    /// Status plus per-file line counts for the sidebar. Never builds patch text.
+    pub fn get_worktree_changes(worktree_path: &str) -> Result<WorktreeChanges, String> {
+        let path = Self::directory(worktree_path)?;
+        let entries = Self::status(&path)?;
+        let total = entries.len();
+        if entries.is_empty() {
+            return Ok(WorktreeChanges {
+                total,
+                files: Vec::new(),
+            });
+        }
+        let mut command = Self::git_cmd();
+        command.args([
+            "-C",
+            &path,
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--numstat",
+            "-z",
+        ]);
+        if Self::has_head(&path)? {
+            command.arg("HEAD");
+        } else {
+            command.arg("--cached");
+        }
+        command.arg("--");
+        // Counts are decoration: a failed or oversized numstat still lists the changed files.
+        let mut counts = Self::run(&mut command, 2 * 1024 * 1024)
+            .and_then(Self::checked)
+            .map(|result| parse_numstat(&result.stdout))
+            .unwrap_or_default();
+        let files = entries
+            .into_iter()
+            .take(MAX_FILES)
+            .map(|(status, file)| {
+                let (additions, deletions) = counts.remove(&file).unwrap_or((0, 0));
+                ChangedFile {
+                    path: file,
+                    status,
+                    additions,
+                    deletions,
+                }
+            })
+            .collect();
+        Ok(WorktreeChanges { total, files })
+    }
     pub fn get_worktree_diff(worktree_path: &str) -> Result<Vec<FileDiff>, String> {
         let path = Self::directory(worktree_path)?;
         let entries = Self::status(&path)?;
@@ -344,12 +399,7 @@ impl GitManager {
         if entries.is_empty() {
             return Ok(Vec::new());
         }
-        let has_head = Self::run(
-            Self::git_cmd().args(["-C", &path, "rev-parse", "--verify", "HEAD"]),
-            64 * 1024,
-        )?
-        .status
-        .success();
+        let has_head = Self::has_head(&path)?;
         let mut command = Self::git_cmd();
         command.args(["-C", &path, "diff", "--no-ext-diff", "--no-textconv"]);
         if has_head {
@@ -556,6 +606,35 @@ fn parse_status(bytes: &[u8]) -> Vec<(String, String)> {
     entries
 }
 
+/// Parses `git diff --numstat -z`. Renames emit an empty path followed by source and destination;
+/// the destination matches the path `git status` reports. Binary files ("-") count as zero.
+fn parse_numstat(bytes: &[u8]) -> HashMap<String, (usize, usize)> {
+    let mut fields = bytes.split(|byte| *byte == 0);
+    let mut counts = HashMap::new();
+    while let Some(field) = fields.next() {
+        let text = String::from_utf8_lossy(field);
+        let mut parts = text.splitn(3, '\t');
+        let (Some(added), Some(deleted), Some(path)) = (parts.next(), parts.next(), parts.next())
+        else {
+            continue;
+        };
+        let path = if path.is_empty() {
+            fields.next();
+            match fields.next() {
+                Some(destination) => String::from_utf8_lossy(destination).into_owned(),
+                None => continue,
+            }
+        } else {
+            path.to_string()
+        };
+        counts.insert(
+            path,
+            (added.parse().unwrap_or(0), deleted.parse().unwrap_or(0)),
+        );
+    }
+    counts
+}
+
 fn unquote_path(path: &str) -> String {
     if !path.starts_with('"') {
         return path.to_string();
@@ -664,6 +743,14 @@ mod tests {
         assert_eq!(entries[2].1, "a\tb.txt");
     }
     #[test]
+    fn numstat_counts_follow_rename_destination_and_skip_binary() {
+        let counts = parse_numstat(b"3\t1\tsrc/a b.rs\0-\t-\timage.png\x005\t0\t\0old.txt\0new.txt\0");
+        assert_eq!(counts.get("src/a b.rs"), Some(&(3, 1)));
+        assert_eq!(counts.get("image.png"), Some(&(0, 0)));
+        assert_eq!(counts.get("new.txt"), Some(&(5, 0)));
+        assert!(!counts.contains_key("old.txt"));
+    }
+    #[test]
     fn preview_limits_are_unicode_safe() {
         assert!(truncate_preview("日本語".repeat(20).as_str(), 5).starts_with('日'));
         assert_eq!(unquote_path(r#""b/a\tb.txt""#), "b/a\tb.txt");
@@ -734,8 +821,19 @@ mod tests {
         assert!(changes
             .iter()
             .any(|file| file.path == "日本 file.txt" && file.additions == 1));
+        let summary = GitManager::get_worktree_changes(&worktree.path).unwrap();
+        assert_eq!(summary.total, 2);
+        assert!(summary.files.iter().any(|file| file.path == "first.txt"
+            && file.status == "M"
+            && file.additions == 1
+            && file.deletions == 1));
+        assert!(summary
+            .files
+            .iter()
+            .any(|file| file.path == "日本 file.txt" && file.status == "??"));
         assert!(GitManager::remove_worktree(&path, &worktree.path, false).is_err());
         GitManager::commit_worktree(&worktree.path, "reviewed task").unwrap();
+        assert_eq!(GitManager::get_worktree_changes(&worktree.path).unwrap().total, 0);
         assert!(GitManager::get_worktree_diff(&worktree.path)
             .unwrap()
             .is_empty());

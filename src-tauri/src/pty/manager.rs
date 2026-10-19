@@ -513,7 +513,9 @@ fn configure_shell(command: &mut CommandBuilder, shell: &str, args: &[String]) {
     }) {
         command.arg("-NoExit");
         command.arg("-Command");
-        command.arg("try { Set-Alias -Name oc -Value opencode -ErrorAction SilentlyContinue } catch {}; $global:__VelaOriginalPrompt = $function:prompt; function global:prompt { try { if ($PWD.Provider.Name -eq 'FileSystem') { $u = [uri]($PWD.ProviderPath + [IO.Path]::DirectorySeparatorChar); [Console]::Write(([char]27) + ']7;' + $u.AbsoluteUri + ([char]7)) } } catch {} ; if ($global:__VelaOriginalPrompt) { & $global:__VelaOriginalPrompt } else { 'PS ' + $PWD + '> ' } }");
+        // XTermView sends Shift+Enter as a Win32 Shift+Enter key record. xterm sends
+        // Ctrl+J as '\n', which ConPTY reports as Ctrl+Enter (InsertLineAbove).
+        command.arg("try { Set-Alias -Name oc -Value opencode -ErrorAction SilentlyContinue } catch {}; try { if (Get-Module -ListAvailable PSReadLine) { Import-Module PSReadLine -ErrorAction SilentlyContinue; Set-PSReadLineKeyHandler -Chord 'Shift+Enter' -Function AddLine -ErrorAction SilentlyContinue; Set-PSReadLineKeyHandler -Chord 'Ctrl+Enter' -Function AddLine -ErrorAction SilentlyContinue } } catch {}; $global:__VelaOriginalPrompt = $function:prompt; function global:prompt { try { if ($PWD.Provider.Name -eq 'FileSystem') { $u = [uri]($PWD.ProviderPath + [IO.Path]::DirectorySeparatorChar); [Console]::Write(([char]27) + ']7;' + $u.AbsoluteUri + ([char]7)) } } catch {} ; if ($global:__VelaOriginalPrompt) { & $global:__VelaOriginalPrompt } else { 'PS ' + $PWD + '> ' } }");
     } else if matches!(binary.as_str(), "cmd" | "cmd.exe") {
         command.env(
             "PROMPT",
@@ -628,5 +630,87 @@ mod tests {
             .unwrap();
         manager.shutdown().unwrap();
         assert!(manager.session(&id).is_err());
+    }
+
+    #[cfg(windows)]
+    fn assert_powershell_adds_line(newline: &[u8]) {
+        use tauri::{Listener, Manager};
+        let app = tauri::test::mock_app();
+        let manager = PtyManager::new();
+        let id = format!("test-shift-enter-{}", uuid::Uuid::new_v4());
+        let collected = Arc::new(Mutex::new(Vec::new()));
+        let sink = collected.clone();
+        app.listen(format!("pty-output-{id}"), move |event: tauri::Event| {
+            if let Ok(bytes) = serde_json::from_str::<Vec<u8>>(event.payload()) {
+                sink.lock().unwrap().extend_from_slice(&bytes);
+            }
+        });
+        let cwd = std::env::current_dir()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        manager
+            .spawn(
+                app.app_handle().clone(),
+                id.clone(),
+                "powershell.exe".into(),
+                vec!["-NoProfile".into(), "-NoLogo".into()],
+                cwd,
+                80,
+                24,
+            )
+            .unwrap();
+        manager.start_output(&id).unwrap();
+        let start = std::time::Instant::now();
+        while start.elapsed() < Duration::from_secs(15) {
+            let s = String::from_utf8_lossy(&collected.lock().unwrap()).to_string();
+            if s.contains("> ") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        std::thread::sleep(Duration::from_millis(200));
+        // Type first line; FIRST_OUT only appears in output once the line runs.
+        manager.write(&id, b"Write-Host ('FIRST' + '_OUT')").unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        manager.write(&id, newline).unwrap();
+        let start = std::time::Instant::now();
+        while start.elapsed() < Duration::from_secs(5)
+            && !String::from_utf8_lossy(&collected.lock().unwrap()).contains(">>")
+        {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let after_shift = String::from_utf8_lossy(&collected.lock().unwrap()).to_string();
+        // First line must NOT have executed yet
+        assert!(!after_shift.contains("FIRST_OUT"));
+        // PSReadLine multiline prompt '>>' must appear
+        assert!(after_shift.contains(">>"));
+
+        // Type second line and press regular Enter (sends \r)
+        manager
+            .write(&id, b"Write-Host ('SECOND' + '_OUT')\rexit\r")
+            .unwrap();
+        let start = std::time::Instant::now();
+        while start.elapsed() < Duration::from_secs(10)
+            && !String::from_utf8_lossy(&collected.lock().unwrap()).contains("SECOND_OUT")
+        {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let after_exec = String::from_utf8_lossy(&collected.lock().unwrap()).to_string();
+        let _ = manager.kill(&id);
+        // Both lines run in typed order. InsertLineAbove (unbound Ctrl+Enter) also
+        // shows '>>' but puts the second line first.
+        let first = after_exec.find("FIRST_OUT").expect("first line did not run");
+        let second = after_exec.find("SECOND_OUT").expect("second line did not run");
+        assert!(first < second, "lines ran out of order: {after_exec:?}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn conpty_shift_enter_powershell() {
+        // The Shift+Enter key record XTermView sends.
+        assert_powershell_adds_line(b"\x1b[13;28;10;1;16;1_\x1b[13;28;10;0;16;1_");
+        // Ctrl+J: xterm sends '\n', which ConPTY reports to PSReadLine as Ctrl+Enter.
+        assert_powershell_adds_line(b"\n");
     }
 }
