@@ -16,13 +16,11 @@ import {
 import { useWorktreeStore } from '../../stores/useWorktreeStore';
 import { useTerminalStore } from '../../stores/useTerminalStore';
 import { useDiffStore } from '../../stores/useDiffStore';
-import { TerminalIcon } from '../terminal/TerminalIcon';
 import { ChangedFilesPanel } from './ChangedFilesPanel';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { errorMessage } from '../../lib/errors';
 import { useNoticeStore } from '../../stores/useNoticeStore';
 import { tauriIpc } from '../../lib/tauriIpc';
-import { formatTabTitle } from '../../lib/shellIntegration';
 
 interface WorktreeSidebarProps {
   onOpenCreateModal: () => void;
@@ -35,7 +33,6 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
   const [removing, setRemoving] = useState(false);
   const [openingDirectory, setOpeningDirectory] = useState(false);
   const removingRef = useRef(false);
-  const launching = useRef(new Set<string>());
 
   const {
     repoPath,
@@ -53,7 +50,7 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
     clearError,
   } = useWorktreeStore();
 
-  const { sessions, activeSessionId, createSession, setActiveSession, profiles, defaultProfileId } = useTerminalStore();
+  const { sessions, activeSessionId, setActiveSession } = useTerminalStore();
   const { openDiffModal } = useDiffStore();
 
   const activeSession = sessions.find((s) => s.id === activeSessionId);
@@ -82,34 +79,6 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
     if (existing) {
       setActiveSession(existing.id);
     }
-  };
-
-  const handleOpenTerminalInWorktree = (path: string, branch: string, worktreeId: string) => {
-    const norm = (p: string) => p.trim().replace(/\\/g, '/').toLowerCase();
-    const targetPath = norm(path);
-    const existing = sessions.find(
-      (s) => !s.exited && (s.worktree_id === worktreeId || norm(s.cwd) === targetPath)
-    );
-
-    if (existing) {
-      setActiveSession(existing.id);
-      return;
-    }
-
-    if (launching.current.has(worktreeId)) return;
-    launching.current.add(worktreeId);
-    const profile = profiles.find((p) => p.id === defaultProfileId) || profiles[0];
-    const title = formatTabTitle(profile?.name || 'PowerShell', branch);
-    void createSession({
-      title,
-      shell: profile?.executable,
-      args: profile?.args,
-      cwd: path,
-      worktreeId,
-      isAgent: profile?.is_agent,
-      agentType: profile?.agent_type,
-    }).catch((error) => useNoticeStore.getState().report('Unable to open terminal in worktree', error))
-      .finally(() => launching.current.delete(worktreeId));
   };
 
   const confirmRemoval = async () => {
@@ -355,25 +324,9 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleOpenTerminalInWorktree(wt.path, wt.branch, wt.id);
-                        }}
-                        className="flex-1 h-6 rounded bg-orca-hover hover:bg-orca-border text-orca-text hover:text-white flex items-center justify-center gap-1 text-[10px] transition-colors cursor-pointer"
-                        title="Open Terminal in this worktree"
-                      >
-                        <TerminalIcon
-                          shell={profiles.find((p) => p.id === 'git-bash')?.executable || profiles[0]?.executable}
-                          title={profiles.find((p) => p.id === 'git-bash')?.name || profiles[0]?.name}
-                          className="w-3 h-3"
-                        />
-                        <span>Terminal</span>
-                      </button>
-
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
                           openDiffModal(wt.path);
                         }}
-                        className="h-6 px-2 rounded bg-orca-hover hover:bg-orca-border text-orca-text hover:text-white flex items-center justify-center gap-1 text-[10px] transition-colors cursor-pointer"
+                        className="flex-1 h-6 px-2 rounded bg-orca-hover hover:bg-orca-border text-orca-text hover:text-white flex items-center justify-center gap-1 text-[10px] transition-colors cursor-pointer"
                         title="View Diffs & Commit"
                       >
                         <FileCode2 className="w-3 h-3 text-orca-emerald" />
