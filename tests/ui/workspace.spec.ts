@@ -1,6 +1,9 @@
 import { expect, test } from '@playwright/test';
 
-for (const viewport of [{ width: 1280, height: 820 }, { width: 800, height: 550 }]) {
+for (const viewport of [
+  { width: 1280, height: 820 },
+  { width: 800, height: 550 },
+]) {
   test(`workspace and modal recovery at ${viewport.width}x${viewport.height}`, async ({ page }, info) => {
     const errors: string[] = [];
     page.on('pageerror', (error) => errors.push(error.message));
@@ -32,7 +35,14 @@ for (const viewport of [{ width: 1280, height: 820 }, { width: 800, height: 550 
     await expect(page.getByText('2 sessions', { exact: true })).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(page.getByRole('dialog')).toHaveCount(0);
-    await page.evaluate(() => window.dispatchEvent(new PromiseRejectionEvent('unhandledrejection', { reason: new Error('Simulated operation failure'), promise: Promise.resolve() })));
+    await page.evaluate(() =>
+      window.dispatchEvent(
+        new PromiseRejectionEvent('unhandledrejection', {
+          reason: new Error('Simulated operation failure'),
+          promise: Promise.resolve(),
+        })
+      )
+    );
     await expect(page.getByRole('alert')).toContainText('Simulated operation failure');
     await expect(page.locator('.xterm:visible')).toHaveCount(2);
     await page.getByRole('button', { name: 'Dismiss error' }).click();

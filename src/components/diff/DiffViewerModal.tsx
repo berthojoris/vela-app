@@ -53,7 +53,6 @@ export const DiffViewerModal: React.FC = () => {
   const dialogRef = useDialog(isOpen, closeDiffModal, isCommitting || isRollingBack);
   useEffect(() => () => clearTimeout(copyTimer.current), []);
 
-
   // Reset search and confirmation modals when modal opens/closes
   useEffect(() => {
     if (!isOpen) {
@@ -137,7 +136,14 @@ export const DiffViewerModal: React.FC = () => {
 
   return (
     <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-[2px] flex items-center justify-center p-6 select-none text-xs">
-      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Visual diff and review" aria-busy={isCommitting} className="w-full max-w-5xl h-[85vh] bg-orca-darker border border-orca-border rounded-xl flex flex-col overflow-hidden">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Visual diff and review"
+        aria-busy={isCommitting}
+        className="w-full max-w-5xl h-[85vh] bg-orca-darker border border-orca-border rounded-xl flex flex-col overflow-hidden"
+      >
         {/* Modal Header */}
         <div className="h-11 px-4 border-b border-orca-border flex items-center justify-between bg-orca-card/60">
           <div className="flex items-center gap-2.5 min-w-0">
@@ -147,7 +153,9 @@ export const DiffViewerModal: React.FC = () => {
             {worktreeName && (
               <div className="flex items-center gap-1.5 px-2 py-0.5 rounded border border-orca-border bg-orca-darkest/70 text-orca-muted text-[11px] truncate max-w-xs font-mono">
                 <FolderGit2 className="w-3 h-3 text-orca-accent shrink-0" />
-                <span className="truncate" title={worktreePath || ''}>{worktreeName}</span>
+                <span className="truncate" title={worktreePath || ''}>
+                  {worktreeName}
+                </span>
               </div>
             )}
 
@@ -202,7 +210,11 @@ export const DiffViewerModal: React.FC = () => {
           </div>
         </div>
 
-        {commitResult && <p role="status" className="px-4 py-3 text-sm text-orca-emerald bg-orca-darker">Commit created successfully.{error ? ' Refresh failed; do not submit the same commit again.' : ''}</p>}
+        {commitResult && (
+          <p role="status" className="px-4 py-3 text-sm text-orca-emerald bg-orca-darker">
+            Commit created successfully.{error ? ' Refresh failed; do not submit the same commit again.' : ''}
+          </p>
+        )}
 
         {/* Global Error Banner */}
         {error && (
@@ -266,9 +278,7 @@ export const DiffViewerModal: React.FC = () => {
             <div className="flex-1 flex flex-col items-center justify-center gap-3 p-8">
               <Loader2 className="w-8 h-8 text-orca-accent animate-spin" />
               <div className="text-sm font-medium text-white">Inspecting Repository Changes...</div>
-              <div className="text-orca-muted text-xs">
-                Scanning working tree, index, and status in worktree.
-              </div>
+              <div className="text-orca-muted text-xs">Scanning working tree, index, and status in worktree.</div>
             </div>
           ) : error && diffs.length === 0 ? (
             /* Fatal Error State */
@@ -313,10 +323,7 @@ export const DiffViewerModal: React.FC = () => {
                       className="flex-1 bg-transparent border-none outline-none text-white text-[11px] placeholder:text-orca-muted"
                     />
                     {searchQuery && (
-                      <button
-                        onClick={() => setSearchQuery('')}
-                        className="text-orca-muted hover:text-white"
-                      >
+                      <button onClick={() => setSearchQuery('')} className="text-orca-muted hover:text-white">
                         <X className="w-3 h-3" />
                       </button>
                     )}
@@ -379,20 +386,14 @@ export const DiffViewerModal: React.FC = () => {
                             {badge.text}
                           </span>
                           <div className="min-w-0 truncate text-[11px]">
-                            {dirPath && (
-                              <span className="text-orca-muted font-normal text-[10px]">{dirPath}/</span>
-                            )}
+                            {dirPath && <span className="text-orca-muted font-normal text-[10px]">{dirPath}/</span>}
                             <span className={isSelected ? 'text-white' : 'text-orca-text'}>{fileName}</span>
                           </div>
                         </div>
 
                         <div className="flex items-center gap-1.5 font-mono text-[10px] shrink-0">
-                          {file.additions > 0 && (
-                            <span className="text-orca-emerald">+{file.additions}</span>
-                          )}
-                          {file.deletions > 0 && (
-                            <span className="text-orca-rose">-{file.deletions}</span>
-                          )}
+                          {file.additions > 0 && <span className="text-orca-emerald">+{file.additions}</span>}
+                          {file.deletions > 0 && <span className="text-orca-rose">-{file.deletions}</span>}
                           <button
                             type="button"
                             onClick={(e) => {
@@ -484,7 +485,8 @@ export const DiffViewerModal: React.FC = () => {
                     <div className="flex-1 overflow-auto p-3 font-mono text-[12px] leading-relaxed">
                       {isDiffTruncated && (
                         <div className="mb-2 p-2 bg-orca-amber/10 border border-orca-amber/30 rounded text-amber-300 text-[11px]">
-                          Note: This diff is large ({diffLines.length} lines). Displaying the first {MAX_DIFF_LINES} lines for optimal performance.
+                          Note: This diff is large ({diffLines.length} lines). Displaying the first {MAX_DIFF_LINES}{' '}
+                          lines for optimal performance.
                         </div>
                       )}
 
@@ -492,7 +494,8 @@ export const DiffViewerModal: React.FC = () => {
                         visibleDiffLines.map((line, idx) => {
                           const isAdd = line.startsWith('+') && !line.startsWith('+++');
                           const isDel = line.startsWith('-') && !line.startsWith('---');
-                          const isHeader = line.startsWith('@@') || line.startsWith('diff ') || line.startsWith('index ');
+                          const isHeader =
+                            line.startsWith('@@') || line.startsWith('diff ') || line.startsWith('index ');
 
                           return (
                             <div
@@ -501,10 +504,10 @@ export const DiffViewerModal: React.FC = () => {
                                 isAdd
                                   ? 'bg-orca-emerald/15 text-emerald-300'
                                   : isDel
-                                  ? 'bg-orca-rose/15 text-rose-300'
-                                  : isHeader
-                                  ? 'text-orca-muted font-bold bg-orca-card/60'
-                                  : 'text-orca-text'
+                                    ? 'bg-orca-rose/15 text-rose-300'
+                                    : isHeader
+                                      ? 'text-orca-muted font-bold bg-orca-card/60'
+                                      : 'text-orca-text'
                               }`}
                             >
                               {line}
@@ -581,7 +584,8 @@ export const DiffViewerModal: React.FC = () => {
           </div>
 
           <p className="text-[10px] leading-none text-orca-muted">
-            Commit mencakup semua perubahan di worktree ini: file tracked, perubahan staged/unstaged, dan file untracked yang tidak di-ignore.
+            Commit mencakup semua perubahan di worktree ini: file tracked, perubahan staged/unstaged, dan file untracked
+            yang tidak di-ignore.
           </p>
         </form>
 
@@ -601,11 +605,16 @@ export const DiffViewerModal: React.FC = () => {
               <p className="text-orca-text leading-relaxed">
                 Apakah Anda yakin ingin membatalkan semua perubahan pada file ini?
               </p>
-              <div className="p-2 rounded bg-orca-darkest border border-orca-border font-mono text-[11px] text-white truncate" title={fileToRollback.path}>
+              <div
+                className="p-2 rounded bg-orca-darkest border border-orca-border font-mono text-[11px] text-white truncate"
+                title={fileToRollback.path}
+              >
                 {fileToRollback.path}
               </div>
               <p className="text-orca-muted text-[11px] leading-relaxed">
-                Perubahan pada file yang sudah dimodifikasi akan dikembalikan ke status commit terakhir (HEAD), dan file baru yang belum pernah di-commit akan dihapus permanen. Tindakan ini <strong className="text-rose-400 font-medium">tidak dapat dibatalkan</strong>.
+                Perubahan pada file yang sudah dimodifikasi akan dikembalikan ke status commit terakhir (HEAD), dan file
+                baru yang belum pernah di-commit akan dihapus permanen. Tindakan ini{' '}
+                <strong className="text-rose-400 font-medium">tidak dapat dibatalkan</strong>.
               </p>
               <div className="flex justify-end gap-2 pt-2">
                 <button
@@ -624,7 +633,7 @@ export const DiffViewerModal: React.FC = () => {
                     try {
                       await rollbackFile(target);
                       setFileToRollback(null);
-                      void useWorktreeStore.getState().refreshWorktrees(true);
+                      void useWorktreeStore.getState().refreshWorktrees(true, true);
                     } catch {
                       // Error is captured in store and displayed in banner
                     }
@@ -662,10 +671,13 @@ export const DiffViewerModal: React.FC = () => {
                 <span id="reset-all-title">Reset / Rollback Semua Perubahan</span>
               </div>
               <p className="text-orca-text leading-relaxed">
-                Apakah Anda yakin ingin membatalkan semua perubahan pada seluruh <strong className="text-white">{diffs.length} file</strong> di worktree ini?
+                Apakah Anda yakin ingin membatalkan semua perubahan pada seluruh{' '}
+                <strong className="text-white">{diffs.length} file</strong> di worktree ini?
               </p>
               <p className="text-orca-muted text-[11px] leading-relaxed">
-                Semua perubahan file tracked (staged maupun unstaged) akan di-reset ke HEAD, dan semua untracked file akan dihapus permanen. Tindakan ini <strong className="text-rose-400 font-medium">tidak dapat dibatalkan</strong>.
+                Semua perubahan file tracked (staged maupun unstaged) akan di-reset ke HEAD, dan semua untracked file
+                akan dihapus permanen. Tindakan ini{' '}
+                <strong className="text-rose-400 font-medium">tidak dapat dibatalkan</strong>.
               </p>
               <div className="flex justify-end gap-2 pt-2">
                 <button
@@ -683,7 +695,7 @@ export const DiffViewerModal: React.FC = () => {
                     try {
                       await resetAll();
                       setConfirmResetAll(false);
-                      void useWorktreeStore.getState().refreshWorktrees(true);
+                      void useWorktreeStore.getState().refreshWorktrees(true, true);
                     } catch {
                       // Error is captured in store and displayed in banner
                     }

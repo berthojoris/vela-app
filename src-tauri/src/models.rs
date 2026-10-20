@@ -13,26 +13,6 @@ pub enum AgentType {
     Custom(String),
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-#[serde(tag = "status", content = "data", rename_all = "snake_case")]
-pub enum AgentStatus {
-    Idle,
-    Running {
-        started_at: u64,
-        task: String,
-    },
-    WaitingUserInput {
-        prompt_preview: String,
-    },
-    Completed {
-        duration_secs: u64,
-    },
-    Failed {
-        exit_code: i32,
-        error_summary: String,
-    },
-}
-
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TerminalSession {
     pub id: String,
@@ -45,7 +25,6 @@ pub struct TerminalSession {
     pub pid: Option<u32>,
     pub is_agent: bool,
     pub agent_type: Option<AgentType>,
-    pub agent_status: Option<AgentStatus>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -94,15 +73,6 @@ pub struct ShellProfile {
     pub agent_type: Option<AgentType>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct DetectedAgent {
-    pub agent_type: AgentType,
-    pub name: String,
-    pub executable: String,
-    pub available: bool,
-    pub version: Option<String>,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -121,33 +91,15 @@ mod tests {
             pid: None,
             is_agent: true,
             agent_type: Some(AgentType::OpenCode),
-            agent_status: None,
         };
 
         let value = serde_json::to_value(session).expect("terminal session should serialize");
         assert_eq!(value["worktree_id"], json!(null));
         assert_eq!(value["pid"], json!(null));
         assert_eq!(value["agent_type"], json!("open_code"));
-        assert_eq!(value["agent_status"], json!(null));
 
-        let ag_val = serde_json::to_value(AgentType::Antigravity).expect("agent type should serialize");
+        let ag_val =
+            serde_json::to_value(AgentType::Antigravity).expect("agent type should serialize");
         assert_eq!(ag_val, json!("antigravity"));
-    }
-
-    #[test]
-    fn agent_status_keeps_tagged_wire_shape() {
-        let value = serde_json::to_value(AgentStatus::Running {
-            started_at: 42,
-            task: "index".into(),
-        })
-        .expect("agent status should serialize");
-
-        assert_eq!(
-            value,
-            json!({
-                "status": "running",
-                "data": { "started_at": 42, "task": "index" }
-            })
-        );
     }
 }

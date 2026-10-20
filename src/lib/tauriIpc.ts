@@ -2,15 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import {
-  DetectedAgent,
-  AgentType,
-  FileDiff,
-  GitWorktree,
-  ShellProfile,
-  TerminalSession,
-  WorktreeChanges,
-} from '../types';
+import { AgentType, FileDiff, GitWorktree, ShellProfile, TerminalSession, WorktreeChanges } from '../types';
 
 export const isTauri = () => {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -49,7 +41,6 @@ export const tauriIpc = {
         pid: null,
         is_agent: params.isAgent,
         agent_type: params.agentType ?? null,
-        agent_status: null,
       };
     }
     return await invoke<TerminalSession>('spawn_terminal', {
@@ -96,15 +87,6 @@ export const tauriIpc = {
     return await invoke<string | null>('find_git_repo', { path: path ?? null });
   },
 
-  async getCurrentDir(): Promise<string | null> {
-    if (!isTauri()) return null;
-    try {
-      return await invoke<string>('get_current_dir');
-    } catch {
-      return null;
-    }
-  },
-
   async openDirectoryInExplorer(path: string): Promise<void> {
     if (!isTauri()) return;
     await invoke('open_directory_in_explorer', { path });
@@ -115,11 +97,7 @@ export const tauriIpc = {
     return await invoke<GitWorktree[]>('list_worktrees', { repoPath, checkStatus });
   },
 
-  async createWorktree(
-    repoPath: string,
-    branch: string,
-    baseBranch?: string
-  ): Promise<GitWorktree> {
+  async createWorktree(repoPath: string, branch: string, baseBranch?: string): Promise<GitWorktree> {
     if (!isTauri()) throw new Error('Not running in Tauri');
     return await invoke<GitWorktree>('create_worktree', {
       repoPath,
@@ -128,11 +106,7 @@ export const tauriIpc = {
     });
   },
 
-  async removeWorktree(
-    repoPath: string,
-    worktreePath: string,
-    force: boolean = false
-  ): Promise<void> {
+  async removeWorktree(repoPath: string, worktreePath: string, force: boolean = false): Promise<void> {
     if (!isTauri()) return;
     await invoke('remove_worktree', { repoPath, worktreePath, force });
   },
@@ -210,11 +184,6 @@ export const tauriIpc = {
     return await invoke<ShellProfile[]>('get_shell_profiles');
   },
 
-  async detectAgents(): Promise<DetectedAgent[]> {
-    if (!isTauri()) return [];
-    return await invoke<DetectedAgent[]>('detect_agents');
-  },
-
   async toggleMaximize(): Promise<boolean> {
     if (!isTauri()) return false;
     return await invoke<boolean>('toggle_maximize');
@@ -245,10 +214,7 @@ export const tauriIpc = {
     return getCurrentWindow().onResized(callback);
   },
 
-  async selectDirectory(options?: {
-    title?: string;
-    defaultPath?: string;
-  }): Promise<string | null> {
+  async selectDirectory(options?: { title?: string; defaultPath?: string }): Promise<string | null> {
     if (!isTauri()) return null;
     try {
       const selected = await open({
@@ -267,15 +233,14 @@ export const tauriIpc = {
         const fallback = await invoke<string | null>('select_directory');
         return fallback ? fallback.replace(/\\/g, '/') : null;
       } catch (fallbackError) {
-        throw new Error(`Unable to open the directory picker: ${String(fallbackError)}. You can type the directory path instead.`);
+        throw new Error(
+          `Unable to open the directory picker: ${String(fallbackError)}. You can type the directory path instead.`
+        );
       }
     }
   },
 
-  onPtyOutput(
-    id: string,
-    callback: (bytes: Uint8Array) => void
-  ): Promise<UnlistenFn> {
+  onPtyOutput(id: string, callback: (bytes: Uint8Array) => void): Promise<UnlistenFn> {
     if (!isTauri()) {
       return Promise.resolve(() => {});
     }

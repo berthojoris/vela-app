@@ -108,6 +108,8 @@ impl PtyManager {
             .ok_or_else(|| format!("Terminal {id} has already exited"))
     }
 
+    // Startup takes the full terminal descriptor; splitting it would add no clarity.
+    #[allow(clippy::too_many_arguments)]
     pub fn spawn<R: tauri::Runtime>(
         &self,
         app: AppHandle<R>,
@@ -671,7 +673,9 @@ mod tests {
         }
         std::thread::sleep(Duration::from_millis(200));
         // Type first line; FIRST_OUT only appears in output once the line runs.
-        manager.write(&id, b"Write-Host ('FIRST' + '_OUT')").unwrap();
+        manager
+            .write(&id, b"Write-Host ('FIRST' + '_OUT')")
+            .unwrap();
         std::thread::sleep(Duration::from_millis(100));
         manager.write(&id, newline).unwrap();
         let start = std::time::Instant::now();
@@ -700,8 +704,12 @@ mod tests {
         let _ = manager.kill(&id);
         // Both lines run in typed order. InsertLineAbove (unbound Ctrl+Enter) also
         // shows '>>' but puts the second line first.
-        let first = after_exec.find("FIRST_OUT").expect("first line did not run");
-        let second = after_exec.find("SECOND_OUT").expect("second line did not run");
+        let first = after_exec
+            .find("FIRST_OUT")
+            .expect("first line did not run");
+        let second = after_exec
+            .find("SECOND_OUT")
+            .expect("second line did not run");
         assert!(first < second, "lines ran out of order: {after_exec:?}");
     }
 

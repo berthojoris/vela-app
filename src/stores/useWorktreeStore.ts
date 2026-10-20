@@ -4,7 +4,10 @@ import { tauriIpc } from '../lib/tauriIpc';
 import { errorMessage } from '../lib/errors';
 
 export function normalizePath(path: string): string {
-  let result = path.trim().replace(/\\/g, '/').replace(/^\/([a-z])\//i, (_, drive: string) => `${drive.toUpperCase()}:/`);
+  let result = path
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/^\/([a-z])\//i, (_, drive: string) => `${drive.toUpperCase()}:/`);
   if (result.length > 3) result = result.replace(/\/+$/, '');
   return result.toLowerCase();
 }
@@ -18,6 +21,8 @@ interface WorktreeState {
   isMutating: boolean;
   error: string | null;
   autoGitStatus: boolean;
+  /** Advances only after a refresh that actually checked Git status (manual, forced, or auto ON). */
+  statusRevision: number;
   initRepo: () => Promise<void>;
   setRepoPath: (path: string) => Promise<void>;
   setAutoGitStatus: (enabled: boolean) => void;
@@ -58,12 +63,23 @@ function saveAutoGitStatus(enabled: boolean): void {
   } catch {}
 }
 
-try { localStorage.removeItem('vela_repo_path'); localStorage.removeItem('orca_repo_path'); } catch { /* Private browsing can disable storage. */ }
+try {
+  localStorage.removeItem('vela_repo_path');
+  localStorage.removeItem('orca_repo_path');
+} catch {
+  /* Private browsing can disable storage. */
+}
 
 export const useWorktreeStore = create<WorktreeState>((set, get) => ({
-  repoPath: null, worktrees: [], activeWorktreeId: null, activeSessionCwd: null,
-  isLoading: false, isMutating: false, error: null,
+  repoPath: null,
+  worktrees: [],
+  activeWorktreeId: null,
+  activeSessionCwd: null,
+  isLoading: false,
+  isMutating: false,
+  error: null,
   autoGitStatus: loadAutoGitStatus(),
+  statusRevision: 0,
 
   setAutoGitStatus: (enabled) => {
     saveAutoGitStatus(enabled);
@@ -83,11 +99,23 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
   },
 
   initRepo: async () => {
-    ++syncSequence; ++refreshSequence; pendingRefresh = null;
-    repoRootCache.clear(); worktreeListCache.clear();
-    set({ repoPath: null, worktrees: [], activeWorktreeId: null, activeSessionCwd: null, isLoading: false, error: null });
+    ++syncSequence;
+    ++refreshSequence;
+    pendingRefresh = null;
+    repoRootCache.clear();
+    worktreeListCache.clear();
+    set({
+      repoPath: null,
+      worktrees: [],
+      activeWorktreeId: null,
+      activeSessionCwd: null,
+      isLoading: false,
+      error: null,
+    });
   },
-  setRepoPath: async (path) => { await get().syncWithSession({ cwd: path }); },
+  setRepoPath: async (path) => {
+    await get().syncWithSession({ cwd: path });
+  },
 
   syncWithSession: async (session) => {
     const request = ++syncSequence;
@@ -95,7 +123,14 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
     pendingRefresh = null;
     const cwd = session?.cwd?.trim() || null;
     if (!cwd) {
-      set({ repoPath: null, worktrees: [], activeWorktreeId: null, activeSessionCwd: null, isLoading: false, error: null });
+      set({
+        repoPath: null,
+        worktrees: [],
+        activeWorktreeId: null,
+        activeSessionCwd: null,
+        isLoading: false,
+        error: null,
+      });
       return;
     }
     const previous = get();
@@ -103,10 +138,12 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
 
     // Fast path: if the cwd is already within the active repository/worktrees, do not flash or reload!
     if (previous.repoPath && previous.worktrees.length > 0) {
-      const matched = [...previous.worktrees].sort((a, b) => b.path.length - a.path.length).find((worktree) => {
-        const path = normalizePath(worktree.path);
-        return normCwd === path || normCwd.startsWith(`${path}/`);
-      });
+      const matched = [...previous.worktrees]
+        .sort((a, b) => b.path.length - a.path.length)
+        .find((worktree) => {
+          const path = normalizePath(worktree.path);
+          return normCwd === path || normCwd.startsWith(`${path}/`);
+        });
       if (matched) {
         // Clearing isLoading matters when this fast path supersedes an in-flight slow repo sync:
         // the stale sync bails on its sequence guard and would otherwise leave the spinner stuck.
@@ -122,13 +159,16 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
     // never flashes the spinner, it just resolves quietly.
     const knownRoot = repoRootCache.get(normCwd);
     const knownList = knownRoot ? worktreeListCache.get(normalizePath(knownRoot)) : undefined;
-    const instant = !!knownRoot && (
-      previous.worktrees.some((worktree) => normalizePath(worktree.path) === normalizePath(knownRoot)) || !!knownList
-    );
+    const instant =
+      !!knownRoot &&
+      (previous.worktrees.some((worktree) => normalizePath(worktree.path) === normalizePath(knownRoot)) || !!knownList);
     set({ activeSessionCwd: cwd, isLoading: !instant && get().autoGitStatus, error: null });
     try {
       const root = knownRoot ?? (await tauriIpc.findGitRepo(cwd));
-      if (root) { if (repoRootCache.size > 64) repoRootCache.clear(); repoRootCache.set(normCwd, root); }
+      if (root) {
+        if (repoRootCache.size > 64) repoRootCache.clear();
+        repoRootCache.set(normCwd, root);
+      }
       if (request !== syncSequence) return;
       if (!root) {
         set({ repoPath: null, worktrees: [], activeWorktreeId: null, isLoading: false });
@@ -144,10 +184,12 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
       }
       if (request !== syncSequence) return;
       // Longest prefix wins for nested worktrees; findGitRepo above detects nested repositories too.
-      const matched = [...list].sort((a, b) => b.path.length - a.path.length).find((worktree) => {
-        const path = normalizePath(worktree.path);
-        return normCwd === path || normCwd.startsWith(`${path}/`);
-      });
+      const matched = [...list]
+        .sort((a, b) => b.path.length - a.path.length)
+        .find((worktree) => {
+          const path = normalizePath(worktree.path);
+          return normCwd === path || normCwd.startsWith(`${path}/`);
+        });
       set({
         repoPath: sameRepo ? previous.repoPath || root : root,
         worktrees: list,
@@ -164,7 +206,10 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
       if (request === syncSequence) {
         set({
           isLoading: false,
-          error: errorMessage(error, 'Unable to detect this repository. Check Git installation and directory permissions.'),
+          error: errorMessage(
+            error,
+            'Unable to detect this repository. Check Git installation and directory permissions.'
+          ),
         });
       }
     }
@@ -176,14 +221,22 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
     if (pendingRefresh?.repo === repoPath) return pendingRefresh.promise;
     const request = ++refreshSequence;
     if (!background) set({ isLoading: true });
+    const shouldCheckStatus = forceStatus || autoGitStatus || !background;
     const operation = (async () => {
       try {
-        const shouldCheckStatus = forceStatus || autoGitStatus || !background;
         const list = await tauriIpc.listWorktrees(repoPath, shouldCheckStatus);
         if (request !== refreshSequence || get().repoPath !== repoPath) return;
-        const active = list.some((worktree) => worktree.id === get().activeWorktreeId) ? get().activeWorktreeId : list[0]?.id ?? null;
+        const active = list.some((worktree) => worktree.id === get().activeWorktreeId)
+          ? get().activeWorktreeId
+          : (list[0]?.id ?? null);
         cacheWorktreeList(repoPath, list);
-        set({ worktrees: list, activeWorktreeId: active, isLoading: false, error: null });
+        set({
+          worktrees: list,
+          activeWorktreeId: active,
+          isLoading: false,
+          error: null,
+          ...(shouldCheckStatus ? { statusRevision: get().statusRevision + 1 } : {}),
+        });
       } catch (error) {
         if (request === refreshSequence && get().repoPath === repoPath) {
           set({
@@ -195,7 +248,11 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
     })();
     const record = { repo: repoPath, promise: operation };
     pendingRefresh = record;
-    try { await operation; } finally { if (pendingRefresh === record) pendingRefresh = null; }
+    try {
+      await operation;
+    } finally {
+      if (pendingRefresh === record) pendingRefresh = null;
+    }
   },
 
   createWorktree: async (branch, baseBranch) => {
@@ -203,7 +260,8 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
     if (!repoPath) throw new Error('No repository selected. Open a terminal inside a Git repository.');
     if (isMutating) throw new Error('Another worktree operation is running. Please wait.');
     const context = syncSequence;
-    ++refreshSequence; pendingRefresh = null;
+    ++refreshSequence;
+    pendingRefresh = null;
     set({ isMutating: true, error: null });
     try {
       const worktree = await tauriIpc.createWorktree(repoPath, branch, baseBranch);
@@ -226,27 +284,40 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
     } catch (error) {
       if (context === syncSequence) set({ error: errorMessage(error) });
       throw error;
-    } finally { set({ isMutating: false }); }
+    } finally {
+      set({ isMutating: false });
+    }
   },
 
   removeWorktree: async (worktreePath, force = false) => {
     const { repoPath, isMutating } = get();
-    if (!repoPath || isMutating) throw new Error('A repository must be selected and other worktree operations must finish first.');
+    if (!repoPath || isMutating)
+      throw new Error('A repository must be selected and other worktree operations must finish first.');
     const context = syncSequence;
-    ++refreshSequence; pendingRefresh = null;
+    ++refreshSequence;
+    pendingRefresh = null;
     set({ isMutating: true, error: null });
     try {
       await tauriIpc.removeWorktree(repoPath, worktreePath, force);
       if (context === syncSequence && get().repoPath === repoPath) {
         const list = get().worktrees.filter((item) => normalizePath(item.path) !== normalizePath(worktreePath));
         cacheWorktreeList(repoPath, list);
-        set({ worktrees: list, activeWorktreeId: list.some((item) => item.id === get().activeWorktreeId) ? get().activeWorktreeId : list[0]?.id ?? null });
+        set({
+          worktrees: list,
+          activeWorktreeId: list.some((item) => item.id === get().activeWorktreeId)
+            ? get().activeWorktreeId
+            : (list[0]?.id ?? null),
+        });
       }
     } catch (error) {
       if (context === syncSequence) set({ error: errorMessage(error) });
       throw error;
-    } finally { set({ isMutating: false }); }
+    } finally {
+      set({ isMutating: false });
+    }
   },
-  selectWorktree: (id) => { if (get().worktrees.some((worktree) => worktree.id === id)) set({ activeWorktreeId: id }); },
+  selectWorktree: (id) => {
+    if (get().worktrees.some((worktree) => worktree.id === id)) set({ activeWorktreeId: id });
+  },
   clearError: () => set({ error: null }),
 }));

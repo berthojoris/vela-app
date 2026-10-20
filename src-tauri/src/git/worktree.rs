@@ -744,7 +744,8 @@ mod tests {
     }
     #[test]
     fn numstat_counts_follow_rename_destination_and_skip_binary() {
-        let counts = parse_numstat(b"3\t1\tsrc/a b.rs\0-\t-\timage.png\x005\t0\t\0old.txt\0new.txt\0");
+        let counts =
+            parse_numstat(b"3\t1\tsrc/a b.rs\0-\t-\timage.png\x005\t0\t\0old.txt\0new.txt\0");
         assert_eq!(counts.get("src/a b.rs"), Some(&(3, 1)));
         assert_eq!(counts.get("image.png"), Some(&(0, 0)));
         assert_eq!(counts.get("new.txt"), Some(&(5, 0)));
@@ -833,7 +834,12 @@ mod tests {
             .any(|file| file.path == "日本 file.txt" && file.status == "??"));
         assert!(GitManager::remove_worktree(&path, &worktree.path, false).is_err());
         GitManager::commit_worktree(&worktree.path, "reviewed task").unwrap();
-        assert_eq!(GitManager::get_worktree_changes(&worktree.path).unwrap().total, 0);
+        assert_eq!(
+            GitManager::get_worktree_changes(&worktree.path)
+                .unwrap()
+                .total,
+            0
+        );
         assert!(GitManager::get_worktree_diff(&worktree.path)
             .unwrap()
             .is_empty());
@@ -841,7 +847,10 @@ mod tests {
         GitManager::remove_worktree(&path, &worktree.path, false).unwrap();
         assert_eq!(GitManager::list_worktrees(&path, true).unwrap().len(), 1);
         assert_eq!(GitManager::list_worktrees(&path, false).unwrap().len(), 1);
-        assert_eq!(GitManager::list_worktrees(&path, false).unwrap()[0].dirty_files_count, 0);
+        assert_eq!(
+            GitManager::list_worktrees(&path, false).unwrap()[0].dirty_files_count,
+            0
+        );
         assert!(GitManager::create_worktree(&path, "--invalid", None).is_err());
         assert!(GitManager::remove_worktree(&path, &path, false).is_err());
 
@@ -859,7 +868,10 @@ mod tests {
 
         // Rollback tracked file
         GitManager::rollback_file(&path, "first.txt").unwrap();
-        assert_eq!(std::fs::read_to_string(&file_tracked).unwrap(), "original\n");
+        assert_eq!(
+            std::fs::read_to_string(&file_tracked).unwrap(),
+            "original\n"
+        );
         assert!(GitManager::get_worktree_diff(&path).unwrap().is_empty());
 
         // Test invalid paths
@@ -871,7 +883,10 @@ mod tests {
         std::fs::write(&file_untracked, "will be cleaned\n").unwrap();
         assert_eq!(GitManager::get_worktree_diff(&path).unwrap().len(), 2);
         GitManager::reset_worktree(&path).unwrap();
-        assert_eq!(std::fs::read_to_string(&file_tracked).unwrap(), "original\n");
+        assert_eq!(
+            std::fs::read_to_string(&file_tracked).unwrap(),
+            "original\n"
+        );
         assert!(!file_untracked.exists());
         assert!(GitManager::get_worktree_diff(&path).unwrap().is_empty());
     }

@@ -2,7 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { deferred, worktree } from '../test/helpers';
 import { GitWorktree } from '../types';
 
-const ipc = vi.hoisted(() => ({ findGitRepo: vi.fn(), listWorktrees: vi.fn(), createWorktree: vi.fn(), removeWorktree: vi.fn() }));
+const ipc = vi.hoisted(() => ({
+  findGitRepo: vi.fn(),
+  listWorktrees: vi.fn(),
+  createWorktree: vi.fn(),
+  removeWorktree: vi.fn(),
+}));
 vi.mock('../lib/tauriIpc', () => ({ tauriIpc: ipc }));
 import { useWorktreeStore as store } from './useWorktreeStore';
 
@@ -141,9 +146,7 @@ describe('autoGitStatus setting and tab switching behavior', () => {
 
   it('revisits a known repository without any Git IPC or spinner even when autoGitStatus is OFF', async () => {
     store.setState({ repoPath: null, worktrees: [], autoGitStatus: false });
-    ipc.findGitRepo
-      .mockResolvedValueOnce('C:/RepoA')
-      .mockResolvedValueOnce('C:/RepoB');
+    ipc.findGitRepo.mockResolvedValueOnce('C:/RepoA').mockResolvedValueOnce('C:/RepoB');
     ipc.listWorktrees
       .mockResolvedValueOnce([worktree('A', 'C:/RepoA')])
       .mockResolvedValueOnce([worktree('B', 'C:/RepoB')]);
@@ -203,7 +206,12 @@ describe('autoGitStatus setting and tab switching behavior', () => {
   });
 
   it('keeps app-side worktree mutations visible in later cross-repo tab switches', async () => {
-    store.setState({ repoPath: 'C:/RepoA', worktrees: [worktree('A', 'C:/RepoA')], activeWorktreeId: 'A', autoGitStatus: false });
+    store.setState({
+      repoPath: 'C:/RepoA',
+      worktrees: [worktree('A', 'C:/RepoA')],
+      activeWorktreeId: 'A',
+      autoGitStatus: false,
+    });
     ipc.createWorktree.mockResolvedValue(worktree('task', 'C:/RepoA/task'));
     ipc.listWorktrees.mockResolvedValue([worktree('A', 'C:/RepoA'), worktree('task', 'C:/RepoA/task')]);
     await store.getState().createWorktree('task');
@@ -221,4 +229,18 @@ describe('autoGitStatus setting and tab switching behavior', () => {
     expect(store.getState().worktrees.map((item) => item.id)).toContain('task');
     expect(store.getState().activeWorktreeId).toBe('task');
   });
+});
+
+it('advances statusRevision only for refreshes that actually check Git status', async () => {
+  store.setState({ repoPath: 'C:/A', worktrees: [worktree('A', 'C:/A')], autoGitStatus: false });
+  ipc.listWorktrees.mockResolvedValue([worktree('A', 'C:/A')]);
+  const before = store.getState().statusRevision;
+
+  await store.getState().refreshWorktrees(true);
+  expect(ipc.listWorktrees).toHaveBeenLastCalledWith('C:/A', false);
+  expect(store.getState().statusRevision).toBe(before);
+
+  await store.getState().refreshWorktrees(false, true);
+  expect(ipc.listWorktrees).toHaveBeenLastCalledWith('C:/A', true);
+  expect(store.getState().statusRevision).toBe(before + 1);
 });

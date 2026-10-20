@@ -10,10 +10,18 @@ it('decodes PowerShell, CMD, and MSYS prompt directory reports', () => {
   expect(cwdFromOsc7('file://fileserver/share/project/')).toBe('//fileserver/share/project');
 });
 it('ignores remote protocols, control characters, and unmapped Linux paths', () => {
-  for (const data of ['javascript:alert(1)', 'https://site/C:/repo', 'file:///home/user', 'file:///C:/repo%00bad', 'file:///C:/repo\n']) expect(cwdFromOsc7(data)).toBeNull();
+  for (const data of [
+    'javascript:alert(1)',
+    'https://site/C:/repo',
+    'file:///home/user',
+    'file:///C:/repo%00bad',
+    'file:///C:/repo\n',
+  ])
+    expect(cwdFromOsc7(data)).toBeNull();
 });
 it('handles every IPC error representation without throwing', () => {
-  for (const error of [null, undefined, {}, 7, new Error(''), ' ']) expect(errorMessage(error, 'fallback')).toBe('fallback');
+  for (const error of [null, undefined, {}, 7, new Error(''), ' '])
+    expect(errorMessage(error, 'fallback')).toBe('fallback');
   expect(errorMessage({ message: 'Access denied' })).toBe('Access denied');
   expect(errorMessage('x'.repeat(10000))).toHaveLength(4000);
 });

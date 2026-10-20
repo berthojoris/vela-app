@@ -5,7 +5,8 @@ A Windows desktop terminal and Git worktree manager built with Rust, Tauri 2, Re
 ## Features
 
 - Native ConPTY terminals with persistent tab buffers and optional WebGL rendering.
-- PowerShell, CMD, Git Bash, WSL, and installed coding agent profiles.
+- PowerShell, CMD, Git Bash, WSL, and coding agent profiles that are listed only when installed.
+- Instant startup: the window is revealed as soon as the React workspace mounts, with no splash delay.
 - Single pane, vertical split, and horizontal split with independent keyboard focus.
 - Git worktree creation/removal, bounded unified diff previews, and commit of all changes.
 - Inline errors, retryable launch forms, isolated terminal render failures, and local diagnostics.
@@ -30,10 +31,14 @@ npm run tauri dev
 ## Checks and release build
 
 ```powershell
+npm run lint
+npm run format:check
 npm test
 npm run test:ui
 npm run build
 cd src-tauri
+cargo fmt --check
+cargo clippy --locked --all-targets -- -D warnings
 cargo check --locked
 cargo test --locked --lib
 cd ..
@@ -42,7 +47,7 @@ npx @tauri-apps/cli build --no-bundle
 
 Release executable: `src-tauri/target/release/vela.exe`. Bundling is disabled; this command does not create an installer. Close a running release copy before rebuilding it.
 
-The Windows CI workflow runs frontend tests/build, Rust checks/tests, and the release build. Rust tests include real temporary Git worktree/diff/commit/remove operations and real Windows ConPTY input/output, natural exit, and shutdown. Frontend tests cover stale requests, duplicate submissions, launch retry, split focus, output acknowledgements, input limits, and directory metadata.
+The Windows CI workflow runs frontend lint/format checks/tests/build, Rust fmt/clippy/checks/tests, and the release build. Rust tests include real temporary Git worktree/diff/commit/remove operations and real Windows ConPTY input/output, natural exit, and shutdown. Frontend tests cover stale requests, duplicate submissions, launch retry, split focus, output acknowledgements, input limits, and directory metadata.
 
 `npm run test:ui` uses an installed Microsoft Edge in an isolated headless profile. It checks the browser-preview workspace at 1280×820 and 800×550, including real xterm layout, split focus, modal shortcuts, and recoverable errors. This does not replace interactive testing in the native WebView2 window. The test runner starts/stops its own Vite server; port 1420 must be free.
 

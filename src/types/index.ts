@@ -1,19 +1,5 @@
 export type AgentType =
-  | 'claude_code'
-  | 'gemini_cli'
-  | 'aider'
-  | 'codex'
-  | 'open_code'
-  | 'droid_cli'
-  | 'antigravity'
-  | { custom: string };
-
-export type AgentStatus =
-  | { status: 'idle' }
-  | { status: 'running'; data: { started_at: number; task: string } }
-  | { status: 'waiting_user_input'; data: { prompt_preview: string } }
-  | { status: 'completed'; data: { duration_secs: number } }
-  | { status: 'failed'; data: { exit_code: number; error_summary: string } };
+  'claude_code' | 'gemini_cli' | 'aider' | 'codex' | 'open_code' | 'droid_cli' | 'antigravity' | { custom: string };
 
 export interface TerminalSession {
   id: string;
@@ -26,7 +12,6 @@ export interface TerminalSession {
   pid: number | null;
   is_agent: boolean;
   agent_type: AgentType | null;
-  agent_status: AgentStatus | null;
   /** Frontend-only lifecycle state; the backend wire model does not contain this. */
   exited?: boolean;
 }
@@ -70,12 +55,4 @@ export interface ShellProfile {
   args: string[];
   is_agent: boolean;
   agent_type: AgentType | null;
-}
-
-export interface DetectedAgent {
-  agent_type: AgentType;
-  name: string;
-  executable: string;
-  available: boolean;
-  version: string | null;
 }

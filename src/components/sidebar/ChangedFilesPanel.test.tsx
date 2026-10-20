@@ -18,7 +18,7 @@ it('lists changed files with their directory and line counts', async () => {
       { path: 'notes.md', status: '??', additions: 0, deletions: 0 },
     ],
   });
-  render(<ChangedFilesPanel worktreePath="C:/repo" branch="main" refreshKey={1} />);
+  render(<ChangedFilesPanel worktreePath="C:/repo" branch="main" refreshKey={1} autoRefresh />);
   expect(await screen.findByText('App.tsx')).toBeTruthy();
   expect(screen.getByText('src/components')).toBeTruthy();
   expect(screen.getByText('notes.md')).toBeTruthy();
@@ -30,14 +30,38 @@ it('lists changed files with their directory and line counts', async () => {
 it('never shows a previous worktree result after switching worktrees', async () => {
   const stale = deferred<WorktreeChanges>();
   ipc.getWorktreeChanges.mockReturnValueOnce(stale.promise).mockResolvedValueOnce({ total: 0, files: [] });
-  const { rerender } = render(<ChangedFilesPanel worktreePath="C:/a" branch="a" refreshKey={1} />);
-  rerender(<ChangedFilesPanel worktreePath="C:/b" branch="b" refreshKey={1} />);
+  const { rerender } = render(<ChangedFilesPanel worktreePath="C:/a" branch="a" refreshKey={1} autoRefresh />);
+  rerender(<ChangedFilesPanel worktreePath="C:/b" branch="b" refreshKey={1} autoRefresh />);
   expect(await screen.findByText(/working tree clean/)).toBeTruthy();
   await act(async () => {
     stale.resolve({ total: 1, files: [{ path: 'old.txt', status: 'M', additions: 1, deletions: 0 }] });
     await stale.promise;
   });
   expect(screen.queryByText('old.txt')).toBeNull();
+});
+it('does not read changes on mount or worktree switch while the auto check is OFF', async () => {
+  ipc.getWorktreeChanges.mockResolvedValue({
+    total: 1,
+    files: [{ path: 'cached.txt', status: 'M', additions: 1, deletions: 0 }],
+  });
+  const { rerender } = render(
+    <ChangedFilesPanel worktreePath="C:/off-a" branch="a" refreshKey={1} autoRefresh={false} />
+  );
+  expect(screen.getByText(/auto check is OFF/)).toBeTruthy();
+  rerender(<ChangedFilesPanel worktreePath="C:/off-b" branch="b" refreshKey={1} autoRefresh={false} />);
+  expect(ipc.getWorktreeChanges).not.toHaveBeenCalled();
+
+  // A status-checked refresh (manual ↻ in the header) still reloads.
+  rerender(<ChangedFilesPanel worktreePath="C:/off-b" branch="b" refreshKey={2} autoRefresh={false} />);
+  expect(await screen.findByText('cached.txt')).toBeTruthy();
+  expect(ipc.getWorktreeChanges).toHaveBeenCalledTimes(1);
+
+  // Switching away and back shows the last result without running Git again.
+  rerender(<ChangedFilesPanel worktreePath="C:/off-a" branch="a" refreshKey={2} autoRefresh={false} />);
+  expect(screen.queryByText('cached.txt')).toBeNull();
+  rerender(<ChangedFilesPanel worktreePath="C:/off-b" branch="b" refreshKey={2} autoRefresh={false} />);
+  expect(screen.getByText('cached.txt')).toBeTruthy();
+  expect(ipc.getWorktreeChanges).toHaveBeenCalledTimes(1);
 });
 it('maps porcelain status codes to single-letter badges', () => {
   expect(describeStatus('??').letter).toBe('U');

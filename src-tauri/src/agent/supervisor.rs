@@ -1,49 +1,13 @@
-use crate::models::{AgentType, DetectedAgent, ShellProfile};
-use std::process::Command;
-
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
-
-const CREATE_NO_WINDOW: u32 = 0x08000000;
+use crate::models::{AgentType, ShellProfile};
 
 pub struct AgentSupervisor;
 
 impl AgentSupervisor {
-    /// Detects installed AI coding agents in the system PATH
-    pub fn detect_installed_agents() -> Vec<DetectedAgent> {
-        let candidates = vec![
-            (AgentType::ClaudeCode, "Claude Code CLI", "claude"),
-            (AgentType::GeminiCli, "Gemini CLI", "gemini"),
-            (AgentType::Aider, "Aider AI Pair Programmer", "aider"),
-            (AgentType::Codex, "Codex CLI", "codex"),
-            (AgentType::OpenCode, "OpenCode", "opencode"),
-            (AgentType::DroidCli, "Droid CLI", "droid"),
-            (AgentType::Antigravity, "Antigravity", "agy"),
-        ];
-
-        let mut detected = Vec::new();
-
-        for (agent_type, name, bin) in candidates {
-            let available = Self::check_binary_exists(bin);
-            let version = if available {
-                Self::get_binary_version(bin)
-            } else {
-                None
-            };
-
-            detected.push(DetectedAgent {
-                agent_type,
-                name: name.to_string(),
-                executable: bin.to_string(),
-                available,
-                version,
-            });
-        }
-
-        detected
-    }
-
-    /// Provides preset shell profiles including standard shells and detected AI agents
+    /// Provides preset shell and agent profiles.
+    ///
+    /// Plain shells come first so the default profile always launches a usable
+    /// terminal. Agent profiles are only listed when their command exists on
+    /// PATH, and every agent runs inside a shell so npm `.cmd` shims resolve.
     pub fn get_shell_profiles() -> Vec<ShellProfile> {
         let mut profiles = Vec::new();
 
@@ -53,52 +17,6 @@ impl AgentSupervisor {
             ("powershell", "Windows PowerShell", "powershell.exe")
         };
 
-        // 1. OpenCode agent profile: opens PowerShell terminal running `opencode`
-        profiles.push(ShellProfile {
-            id: "agent-opencode".to_string(),
-            name: "OpenCode".to_string(),
-            executable: pwsh_bin.to_string(),
-            args: vec![
-                "-NoLogo".to_string(),
-                "-NoExit".to_string(),
-                "-Command".to_string(),
-                "opencode".to_string(),
-            ],
-            is_agent: true,
-            agent_type: Some(AgentType::OpenCode),
-        });
-
-        // 2. Droid CLI agent profile: opens PowerShell terminal running `droid`
-        profiles.push(ShellProfile {
-            id: "agent-droid".to_string(),
-            name: "Droid CLI".to_string(),
-            executable: pwsh_bin.to_string(),
-            args: vec![
-                "-NoLogo".to_string(),
-                "-NoExit".to_string(),
-                "-Command".to_string(),
-                "droid".to_string(),
-            ],
-            is_agent: true,
-            agent_type: Some(AgentType::DroidCli),
-        });
-
-        // 3. Antigravity agent profile: opens PowerShell terminal running `agy`
-        profiles.push(ShellProfile {
-            id: "agent-antigravity".to_string(),
-            name: "Antigravity".to_string(),
-            executable: pwsh_bin.to_string(),
-            args: vec![
-                "-NoLogo".to_string(),
-                "-NoExit".to_string(),
-                "-Command".to_string(),
-                "agy".to_string(),
-            ],
-            is_agent: true,
-            agent_type: Some(AgentType::Antigravity),
-        });
-
-        // 4. PowerShell 7 (pwsh) or Windows PowerShell
         profiles.push(ShellProfile {
             id: pwsh_id.to_string(),
             name: pwsh_name.to_string(),
@@ -108,7 +26,6 @@ impl AgentSupervisor {
             agent_type: None,
         });
 
-        // 5. Command Prompt
         profiles.push(ShellProfile {
             id: "cmd".to_string(),
             name: "Command Prompt".to_string(),
@@ -118,7 +35,7 @@ impl AgentSupervisor {
             agent_type: None,
         });
 
-        // 6. Git Bash (if found in standard locations)
+        // Git Bash is only detected at the two standard install locations.
         let git_bash_paths = [
             "C:\\Program Files\\Git\\bin\\bash.exe",
             "C:\\Program Files (x86)\\Git\\bin\\bash.exe",
@@ -137,7 +54,6 @@ impl AgentSupervisor {
             }
         }
 
-        // 7. WSL
         if Self::check_binary_exists("wsl.exe") {
             profiles.push(ShellProfile {
                 id: "wsl".to_string(),
@@ -149,57 +65,62 @@ impl AgentSupervisor {
             });
         }
 
-        // 8. Other detected AI Coding Agent Profiles
-        if Self::check_binary_exists("claude") {
-            profiles.push(ShellProfile {
-                id: "agent-claude".to_string(),
-                name: "Claude Code".to_string(),
-                executable: "claude".to_string(),
-                args: vec![],
-                is_agent: true,
-                agent_type: Some(AgentType::ClaudeCode),
-            });
-        }
-
-        if Self::check_binary_exists("gemini") {
-            profiles.push(ShellProfile {
-                id: "agent-gemini".to_string(),
-                name: "Gemini CLI".to_string(),
-                executable: "gemini".to_string(),
-                args: vec![],
-                is_agent: true,
-                agent_type: Some(AgentType::GeminiCli),
-            });
-        }
-
-        if Self::check_binary_exists("aider") {
-            profiles.push(ShellProfile {
-                id: "agent-aider".to_string(),
-                name: "Aider AI".to_string(),
-                executable: "aider".to_string(),
-                args: vec![],
-                is_agent: true,
-                agent_type: Some(AgentType::Aider),
-            });
-        }
-
-        for (id, name, executable, agent_type) in [
+        for (id, name, command, agent_type) in [
+            (
+                "agent-opencode",
+                "OpenCode",
+                "opencode",
+                AgentType::OpenCode,
+            ),
+            ("agent-droid", "Droid CLI", "droid", AgentType::DroidCli),
+            (
+                "agent-antigravity",
+                "Antigravity",
+                "agy",
+                AgentType::Antigravity,
+            ),
+            (
+                "agent-claude",
+                "Claude Code",
+                "claude",
+                AgentType::ClaudeCode,
+            ),
+            ("agent-gemini", "Gemini CLI", "gemini", AgentType::GeminiCli),
+            ("agent-aider", "Aider AI", "aider", AgentType::Aider),
             ("agent-codex", "Codex CLI", "codex", AgentType::Codex),
         ] {
-            if Self::check_binary_exists(executable) {
-                profiles.push(ShellProfile {
-                    id: id.into(),
-                    name: name.into(),
-                    executable: executable.into(),
-                    args: vec![],
-                    is_agent: true,
-                    agent_type: Some(agent_type),
-                });
+            if Self::check_binary_exists(command) {
+                profiles.push(Self::shell_agent_profile(
+                    id, name, pwsh_bin, command, agent_type,
+                ));
             }
         }
 
         profiles
+    }
 
+    /// Agent CLIs are started by the shell: this resolves npm `.cmd` shims,
+    /// which `CreateProcess` cannot launch directly.
+    fn shell_agent_profile(
+        id: &str,
+        name: &str,
+        shell_bin: &str,
+        command: &str,
+        agent_type: AgentType,
+    ) -> ShellProfile {
+        ShellProfile {
+            id: id.to_string(),
+            name: name.to_string(),
+            executable: shell_bin.to_string(),
+            args: vec![
+                "-NoLogo".to_string(),
+                "-NoExit".to_string(),
+                "-Command".to_string(),
+                command.to_string(),
+            ],
+            is_agent: true,
+            agent_type: Some(agent_type),
+        }
     }
 
     /// Pure in-process binary lookup via PATH without spawning where.exe/cmd.exe
@@ -224,24 +145,38 @@ impl AgentSupervisor {
         }
         false
     }
+}
 
-    fn get_binary_version(bin: &str) -> Option<String> {
-        let mut cmd = Command::new(bin);
-        #[cfg(windows)]
-        cmd.creation_flags(CREATE_NO_WINDOW);
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-        let output = crate::process::output(
-            cmd.arg("--version"),
-            std::time::Duration::from_secs(5),
-            64 * 1024,
-        )
-        .ok()?;
-        if output.status.success() {
-            let str_val = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !str_val.is_empty() {
-                return Some(str_val);
-            }
+    #[test]
+    fn plain_shells_come_before_agents() {
+        let profiles = AgentSupervisor::get_shell_profiles();
+        let first_agent = profiles.iter().position(|profile| profile.is_agent);
+        let last_shell = profiles.iter().rposition(|profile| !profile.is_agent);
+        if let (Some(first_agent), Some(last_shell)) = (first_agent, last_shell) {
+            assert!(last_shell < first_agent);
         }
-        None
+        assert!(profiles
+            .iter()
+            .any(|profile| profile.id == "pwsh" || profile.id == "powershell"));
+        assert!(profiles.iter().any(|profile| profile.id == "cmd"));
+    }
+
+    #[test]
+    fn agent_profiles_run_through_the_shell() {
+        let profiles = AgentSupervisor::get_shell_profiles();
+        for profile in profiles.iter().filter(|profile| profile.is_agent) {
+            let executable = profile.executable.to_ascii_lowercase();
+            assert!(
+                executable.ends_with("pwsh.exe") || executable.ends_with("powershell.exe"),
+                "agent {} must run through a shell, got {}",
+                profile.id,
+                profile.executable
+            );
+            assert!(profile.args.iter().any(|arg| arg == "-Command"));
+        }
     }
 }

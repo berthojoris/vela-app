@@ -25,9 +25,7 @@ export const StatusBar: React.FC = () => {
             <span className="text-orca-muted">Worktree:</span>
             <span className="text-orca-text font-semibold">{activeWorktree.branch}</span>
             {activeWorktree.dirty_files_count > 0 && (
-              <span className="text-orca-amber ml-1">
-                ({activeWorktree.dirty_files_count} modified)
-              </span>
+              <span className="text-orca-amber ml-1">({activeWorktree.dirty_files_count} modified)</span>
             )}
           </div>
         )}
@@ -43,7 +41,9 @@ export const StatusBar: React.FC = () => {
         {activeAgents > 0 && (
           <div className="flex items-center gap-1.5 text-orca-emerald bg-orca-emerald/10 px-1.5 py-0.5 rounded border border-orca-emerald/30">
             <Cpu className="w-3 h-3" />
-            <span>{activeAgents} Agent{activeAgents > 1 ? 's' : ''} Active</span>
+            <span>
+              {activeAgents} Agent{activeAgents > 1 ? 's' : ''} Active
+            </span>
           </div>
         )}
 

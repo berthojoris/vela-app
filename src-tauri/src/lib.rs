@@ -13,13 +13,12 @@ pub mod pty;
 
 use agent::supervisor::AgentSupervisor;
 use git::worktree::GitManager;
-use models::{
-    AgentType, DetectedAgent, FileDiff, GitWorktree, ShellProfile, TerminalSession,
-    WorktreeChanges,
-};
+use models::{AgentType, FileDiff, GitWorktree, ShellProfile, TerminalSession, WorktreeChanges};
 use pty::manager::PtyManager;
 use tauri::{AppHandle, Manager, State, Window};
 
+// The parameter list mirrors the IPC wire contract; the frontend sends each field.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 async fn spawn_terminal(
     app: AppHandle,
@@ -67,7 +66,6 @@ async fn spawn_terminal(
             pid,
             is_agent,
             agent_type,
-            agent_status: None,
         })
     })
     .await
@@ -197,10 +195,7 @@ async fn commit_worktree(worktree_path: String, message: String) -> Result<Strin
 }
 
 #[tauri::command]
-async fn rollback_worktree_file(
-    worktree_path: String,
-    file_path: String,
-) -> Result<(), String> {
+async fn rollback_worktree_file(worktree_path: String, file_path: String) -> Result<(), String> {
     tokio::task::spawn_blocking(move || GitManager::rollback_file(&worktree_path, &file_path))
         .await
         .map_err(|e| format!("Task execution error: {}", e))?
@@ -216,13 +211,6 @@ async fn reset_worktree(worktree_path: String) -> Result<(), String> {
 #[tauri::command]
 fn get_shell_profiles() -> Result<Vec<ShellProfile>, String> {
     Ok(AgentSupervisor::get_shell_profiles())
-}
-
-#[tauri::command]
-async fn detect_agents() -> Result<Vec<DetectedAgent>, String> {
-    tokio::task::spawn_blocking(AgentSupervisor::detect_installed_agents)
-        .await
-        .map_err(|e| format!("Task execution error: {}", e))
 }
 
 #[tauri::command]
@@ -299,13 +287,6 @@ fn select_directory_blocking() -> Result<Option<String>, String> {
     }
 }
 
-#[tauri::command]
-fn get_current_dir() -> Result<String, String> {
-    std::env::current_dir()
-        .map(|p| p.to_string_lossy().to_string().replace('\\', "/"))
-        .map_err(|e| e.to_string())
-}
-
 pub fn format_explorer_path(path: &str) -> Result<String, String> {
     let trimmed = path.trim().trim_matches('"');
     let path_buf = std::path::PathBuf::from(trimmed);
@@ -348,8 +329,6 @@ pub fn run() {
     let pty_manager = PtyManager::new();
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(pty_manager)
         .on_window_event(|window, event| {
@@ -365,11 +344,15 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            // The frontend reveals the window as soon as React mounts. This is a
+            // safety net for a failed frontend load, not a startup delay.
             let handle = app.handle().clone();
             std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(2500));
+                std::thread::sleep(std::time::Duration::from_secs(3));
                 if let Some(window) = handle.get_webview_window("main") {
-                    let _ = window.show();
+                    if !window.is_visible().unwrap_or(false) {
+                        let _ = window.show();
+                    }
                 }
             });
             Ok(())
@@ -392,14 +375,12 @@ pub fn run() {
             rollback_worktree_file,
             reset_worktree,
             get_shell_profiles,
-            detect_agents,
             toggle_maximize,
             minimize_window,
             close_window,
             is_window_maximized,
             show_window,
             select_directory,
-            get_current_dir,
             open_directory_in_explorer,
         ])
         .build(tauri::generate_context!())
@@ -455,9 +436,15 @@ mod tests {
         let current = std::env::current_dir().unwrap();
         let forward_str = current.to_string_lossy().replace('\\', "/");
         let formatted = format_explorer_path(&forward_str).expect("Valid dir should format");
-        assert!(!formatted.contains('/'), "Formatted path should not have forward slashes: {formatted}");
+        assert!(
+            !formatted.contains('/'),
+            "Formatted path should not have forward slashes: {formatted}"
+        );
         assert!(formatted.contains('\\') || formatted.len() <= 3);
-        assert!(!formatted.ends_with('\\') || formatted.len() <= 3, "Non-root path should not end with backslash: {formatted}");
+        assert!(
+            !formatted.ends_with('\\') || formatted.len() <= 3,
+            "Non-root path should not end with backslash: {formatted}"
+        );
     }
 
     #[test]

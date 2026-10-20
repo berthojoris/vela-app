@@ -36,11 +36,17 @@ export const App: React.FC = () => {
   useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
-    void tauriIpc.onAppError((message) => useNoticeStore.getState().report('Vela', message))
-      .then((cleanup) => { if (disposed) cleanup(); else unlisten = cleanup; })
+    void tauriIpc
+      .onAppError((message) => useNoticeStore.getState().report('Vela', message))
+      .then((cleanup) => {
+        if (disposed) cleanup();
+        else unlisten = cleanup;
+      })
       .catch((error) => useNoticeStore.getState().report('Unable to subscribe to application errors', error));
-    const handleRejection = (event: PromiseRejectionEvent) => useNoticeStore.getState().report('An operation could not finish', event.reason);
-    const handleError = (event: ErrorEvent) => useNoticeStore.getState().report('An interface operation failed', event.error ?? event.message);
+    const handleRejection = (event: PromiseRejectionEvent) =>
+      useNoticeStore.getState().report('An operation could not finish', event.reason);
+    const handleError = (event: ErrorEvent) =>
+      useNoticeStore.getState().report('An interface operation failed', event.error ?? event.message);
     window.addEventListener('unhandledrejection', handleRejection);
     window.addEventListener('error', handleError);
     return () => {
@@ -120,10 +126,7 @@ export const App: React.FC = () => {
           setModalInitialProfileId(undefined);
         }}
       />
-      <CreateWorktreeModal
-        isOpen={isCreateWorktreeOpen}
-        onClose={() => setIsCreateWorktreeOpen(false)}
-      />
+      <CreateWorktreeModal isOpen={isCreateWorktreeOpen} onClose={() => setIsCreateWorktreeOpen(false)} />
       <DiffViewerModal />
     </div>
   );

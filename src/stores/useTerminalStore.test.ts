@@ -7,8 +7,13 @@ import { useTerminalStore as store } from './useTerminalStore';
 
 beforeEach(() => {
   store.setState(store.getInitialState());
-  ipc.spawnTerminal.mockReset(); ipc.killTerminal.mockReset();
-  store.setState({ sessions: [session('one'), session('two'), session('three')], activeSessionId: 'one', primarySessionId: 'one' });
+  ipc.spawnTerminal.mockReset();
+  ipc.killTerminal.mockReset();
+  store.setState({
+    sessions: [session('one'), session('two'), session('three')],
+    activeSessionId: 'one',
+    primarySessionId: 'one',
+  });
 });
 
 describe('stable terminal panes', () => {
@@ -49,18 +54,47 @@ describe('stable terminal panes', () => {
 
 describe('safe launch defaults', () => {
   it('never inherits PowerShell arguments for an unrelated custom binary', async () => {
-    store.setState({ profiles: [{ id: 'pwsh', name: 'PowerShell', executable: 'pwsh.exe', args: ['-NoLogo'], is_agent: false, agent_type: null }] });
+    store.setState({
+      profiles: [
+        {
+          id: 'pwsh',
+          name: 'PowerShell',
+          executable: 'pwsh.exe',
+          args: ['-NoLogo'],
+          is_agent: false,
+          agent_type: null,
+        },
+      ],
+    });
     ipc.spawnTerminal.mockImplementation(async (params) => ({ ...session(params.id), shell: params.shell }));
     await store.getState().createSession({ shell: 'claude', isAgent: true });
     expect(ipc.spawnTerminal.mock.calls[0][0].args).toEqual([]);
   });
   it('keeps a PowerShell tab from inheriting an agent profile that shares its executable', async () => {
-    store.setState({ profiles: [
-      { id: 'agent-opencode', name: 'OpenCode', executable: 'powershell.exe', args: ['-NoLogo', '-NoExit', '-Command', 'opencode'], is_agent: true, agent_type: 'open_code' },
-      { id: 'powershell', name: 'Windows PowerShell', executable: 'powershell.exe', args: ['-NoLogo'], is_agent: false, agent_type: null },
-    ] });
+    store.setState({
+      profiles: [
+        {
+          id: 'agent-opencode',
+          name: 'OpenCode',
+          executable: 'powershell.exe',
+          args: ['-NoLogo', '-NoExit', '-Command', 'opencode'],
+          is_agent: true,
+          agent_type: 'open_code',
+        },
+        {
+          id: 'powershell',
+          name: 'Windows PowerShell',
+          executable: 'powershell.exe',
+          args: ['-NoLogo'],
+          is_agent: false,
+          agent_type: null,
+        },
+      ],
+    });
     ipc.spawnTerminal.mockImplementation(async (params) => ({ ...session(params.id), shell: params.shell }));
-    await store.getState().createSession({ shell: 'powershell.exe', args: ['-NoLogo'], isAgent: false, agentType: null });
+    await store
+      .getState()
+      .createSession({ shell: 'powershell.exe', args: ['-NoLogo'], isAgent: false, agentType: null });
     await store.getState().createSession({ shell: 'powershell.exe' });
     for (const [params] of ipc.spawnTerminal.mock.calls) {
       expect(params.agentType).toBeNull();

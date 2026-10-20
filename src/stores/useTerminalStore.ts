@@ -47,63 +47,60 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   secondarySessionId: null,
   splitMode: 'none',
   profiles: [],
-  defaultProfileId: 'agent-opencode',
+  defaultProfileId: '',
   createSession: async (params = {}) => {
-    if (get().sessions.length + pendingLaunches >= 32) throw new Error('The 32 tab limit has been reached. Close an unused tab first.');
+    if (get().sessions.length + pendingLaunches >= 32)
+      throw new Error('The 32 tab limit has been reached. Close an unused tab first.');
     ++pendingLaunches;
     try {
-    const { profiles, defaultProfileId } = get();
+      const { profiles, defaultProfileId } = get();
 
-    const selectedProfile =
-      profiles.find((p) => p.id === defaultProfileId) || profiles[0];
+      const selectedProfile = profiles.find((p) => p.id === defaultProfileId) || profiles[0];
 
-    const shell = params.shell || selectedProfile?.executable || 'powershell.exe';
-    // Agent profiles reuse the shell executable (OpenCode runs in powershell.exe),
-    // so match on agent-ness too; otherwise a PowerShell tab inherits OpenCode's
-    // agent type and arguments.
-    const shellProfile = params.shell
-      ? profiles.find(
-          (profile) =>
-            profile.executable.toLowerCase() === shell.toLowerCase() &&
-            profile.is_agent === (params.isAgent ?? false)
-        )
-      : selectedProfile;
-    const args =
-      params.args ??
-      shellProfile?.args ??
-      [];
-    const isAgent = params.isAgent ?? shellProfile?.is_agent ?? false;
+      const shell = params.shell || selectedProfile?.executable || 'powershell.exe';
+      // Agent profiles reuse the shell executable (OpenCode runs in powershell.exe),
+      // so match on agent-ness too; otherwise a PowerShell tab inherits OpenCode's
+      // agent type and arguments.
+      const shellProfile = params.shell
+        ? profiles.find(
+            (profile) =>
+              profile.executable.toLowerCase() === shell.toLowerCase() && profile.is_agent === (params.isAgent ?? false)
+          )
+        : selectedProfile;
+      const args = params.args ?? shellProfile?.args ?? [];
+      const isAgent = params.isAgent ?? shellProfile?.is_agent ?? false;
 
-    const id = `term-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-    const title =
-      params.title ||
-      (isAgent ? shellProfile?.name || 'AI Agent' : formatTabTitle(shellProfile?.name || 'Terminal'));
+      const id = `term-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+      const title =
+        params.title || (isAgent ? shellProfile?.name || 'AI Agent' : formatTabTitle(shellProfile?.name || 'Terminal'));
 
-    const cwd = params.cwd || '';
+      const cwd = params.cwd || '';
 
-    // Call Rust backend to spawn ConPTY
-    const newSession = await tauriIpc.spawnTerminal({
-      id,
-      title,
-      shell,
-      args,
-      cwd,
-      cols: 80,
-      rows: 24,
-      worktreeId: params.worktreeId,
-      isAgent,
-      // An explicit null means "not an agent"; only fall back when it was omitted.
-      agentType: params.agentType !== undefined ? params.agentType : shellProfile?.agent_type,
-    });
+      // Call Rust backend to spawn ConPTY
+      const newSession = await tauriIpc.spawnTerminal({
+        id,
+        title,
+        shell,
+        args,
+        cwd,
+        cols: 80,
+        rows: 24,
+        worktreeId: params.worktreeId,
+        isAgent,
+        // An explicit null means "not an agent"; only fall back when it was omitted.
+        agentType: params.agentType !== undefined ? params.agentType : shellProfile?.agent_type,
+      });
 
-    set((state) => ({
-      sessions: [...state.sessions, { ...newSession, exited: false }],
-      activeSessionId: newSession.id,
-      primarySessionId: newSession.id,
-    }));
+      set((state) => ({
+        sessions: [...state.sessions, { ...newSession, exited: false }],
+        activeSessionId: newSession.id,
+        primarySessionId: newSession.id,
+      }));
 
-    return newSession;
-    } finally { --pendingLaunches; }
+      return newSession;
+    } finally {
+      --pendingLaunches;
+    }
   },
 
   closeSession: async (id: string) => {
@@ -120,9 +117,10 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       }
 
       const nextPrimary = remaining.some((session) => session.id === state.primarySessionId)
-        ? state.primarySessionId : nextActiveId;
-      const nextSecondary = remaining.find((session) =>
-        session.id === state.secondarySessionId && session.id !== nextPrimary)?.id ?? null;
+        ? state.primarySessionId
+        : nextActiveId;
+      const nextSecondary =
+        remaining.find((session) => session.id === state.secondarySessionId && session.id !== nextPrimary)?.id ?? null;
 
       return {
         sessions: remaining,
@@ -138,16 +136,17 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     set((state) => {
       const session = state.sessions.find((candidate) => candidate.id === id);
       if (!session || session.exited || session.cwd === cwd) return state;
-      return { sessions: state.sessions.map((candidate) => candidate.id === id
-        ? { ...candidate, cwd, worktree_id: null } : candidate) };
+      return {
+        sessions: state.sessions.map((candidate) =>
+          candidate.id === id ? { ...candidate, cwd, worktree_id: null } : candidate
+        ),
+      };
     });
   },
 
   markSessionExited: (id: string) => {
     set((state) => ({
-      sessions: state.sessions.map((session) =>
-        session.id === id ? { ...session, exited: true } : session
-      ),
+      sessions: state.sessions.map((session) => (session.id === id ? { ...session, exited: true } : session)),
     }));
   },
 
@@ -156,8 +155,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       if (!state.sessions.some((session) => session.id === id)) return state;
       return {
         activeSessionId: id,
-        primarySessionId: state.splitMode !== 'none' && id === state.secondarySessionId
-          ? state.primarySessionId : id,
+        primarySessionId: state.splitMode !== 'none' && id === state.secondarySessionId ? state.primarySessionId : id,
       };
     });
   },
@@ -184,9 +182,11 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   fetchProfiles: async () => {
     try {
       const profiles = await tauriIpc.getShellProfiles();
+      // Prefer a plain shell: agent profiles are only offered when installed.
+      const defaultProfile = profiles.find((profile) => !profile.is_agent) ?? profiles[0];
       set({
         profiles,
-        defaultProfileId: profiles[0]?.id || 'agent-opencode',
+        defaultProfileId: defaultProfile?.id || '',
       });
     } catch (e) {
       useNoticeStore.getState().report('Unable to load shell profiles. You can retry from the terminal dialog', e);
@@ -195,9 +195,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
   renameSession: (id: string, newTitle: string) => {
     set((state) => ({
-      sessions: state.sessions.map((s) =>
-        s.id === id ? { ...s, title: newTitle } : s
-      ),
+      sessions: state.sessions.map((s) => (s.id === id ? { ...s, title: newTitle } : s)),
     }));
   },
 }));

@@ -11,9 +11,15 @@ import { CreateWorktreeModal } from './CreateWorktreeModal';
 beforeEach(() => {
   useTerminalStore.setState(useTerminalStore.getInitialState());
   useWorktreeStore.setState(useWorktreeStore.getInitialState());
-  useTerminalStore.setState({ defaultProfileId: 'cmd', profiles: [{ id: 'cmd', name: 'Command Prompt', executable: 'cmd.exe', args: [], is_agent: false, agent_type: null }] });
+  useTerminalStore.setState({
+    defaultProfileId: 'cmd',
+    profiles: [
+      { id: 'cmd', name: 'Command Prompt', executable: 'cmd.exe', args: [], is_agent: false, agent_type: null },
+    ],
+  });
   useWorktreeStore.setState({ repoPath: 'C:/repo' });
-  ipc.spawnTerminal.mockReset(); ipc.createWorktree.mockReset();
+  ipc.spawnTerminal.mockReset();
+  ipc.createWorktree.mockReset();
   ipc.listWorktrees.mockResolvedValue([worktree('task')]);
 });
 it('retries terminal launch without recreating an already created worktree', async () => {

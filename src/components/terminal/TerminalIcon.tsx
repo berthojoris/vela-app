@@ -14,12 +14,7 @@ export interface TerminalIconProps {
  * Git Bash icon (official Git orange diamond logo)
  */
 export const GitBashIcon: React.FC<{ className?: string }> = ({ className = 'w-3.5 h-3.5' }) => (
-  <svg
-    viewBox="0 0 24 24"
-    fill="none"
-    xmlns="http://www.w3.org/2000/svg"
-    className={`${className} shrink-0`}
-  >
+  <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={`${className} shrink-0`}>
     <path
       fill="#F05032"
       d="M13.09 23.549a1.54 1.54 0 0 1-2.18 0L.451 13.089a1.54 1.54 0 0 1 0-2.179l7.191-7.19 2.733 2.733a1.85 1.85 0 0 0 .964 2.326v6.66a1.849 1.849 0 1 0 1.54 0V8.957l2.508 2.508a1.85 1.85 0 1 0 1.09-1.09l-2.634-2.634a1.85 1.85 0 0 0-2.378-2.377L8.73 2.63 10.91.451a1.54 1.54 0 0 1 2.179 0l10.459 10.46a1.54 1.54 0 0 1 0 2.179z"
@@ -31,17 +26,9 @@ export const GitBashIcon: React.FC<{ className?: string }> = ({ className = 'w-3
  * Windows PowerShell icon
  */
 export const PowerShellIcon: React.FC<{ className?: string }> = ({ className = 'w-3.5 h-3.5' }) => (
-  <svg
-    viewBox="0 0 24 24"
-    fill="none"
-    xmlns="http://www.w3.org/2000/svg"
-    className={`${className} shrink-0`}
-  >
+  <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={`${className} shrink-0`}>
     <rect width="22" height="18" x="1" y="3" rx="3" fill="#2563EB" />
-    <path
-      d="M5.5 7.5L10 12l-4.5 4.5h2.2l4.5-4.5-4.5-4.5H5.5zm6 8h6v1.5h-6z"
-      fill="#FFFFFF"
-    />
+    <path d="M5.5 7.5L10 12l-4.5 4.5h2.2l4.5-4.5-4.5-4.5H5.5zm6 8h6v1.5h-6z" fill="#FFFFFF" />
   </svg>
 );
 
@@ -49,17 +36,9 @@ export const PowerShellIcon: React.FC<{ className?: string }> = ({ className = '
  * Windows Command Prompt (CMD) icon
  */
 export const CmdIcon: React.FC<{ className?: string }> = ({ className = 'w-3.5 h-3.5' }) => (
-  <svg
-    viewBox="0 0 24 24"
-    fill="none"
-    xmlns="http://www.w3.org/2000/svg"
-    className={`${className} shrink-0`}
-  >
+  <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={`${className} shrink-0`}>
     <rect width="22" height="18" x="1" y="3" rx="2.5" fill="#18181B" stroke="#3F3F46" strokeWidth="1.2" />
-    <path
-      d="M5 8.5l3.5 3.5L5 15.5h1.8l3.5-3.5L6.8 8.5H5zm5.5 6.5h5.5v1.4h-5.5z"
-      fill="#E4E4E7"
-    />
+    <path d="M5 8.5l3.5 3.5L5 15.5h1.8l3.5-3.5L6.8 8.5H5zm5.5 6.5h5.5v1.4h-5.5z" fill="#E4E4E7" />
   </svg>
 );
 
@@ -67,12 +46,7 @@ export const CmdIcon: React.FC<{ className?: string }> = ({ className = 'w-3.5 h
  * WSL / Ubuntu Linux icon
  */
 export const WslIcon: React.FC<{ className?: string }> = ({ className = 'w-3.5 h-3.5' }) => (
-  <svg
-    viewBox="0 0 24 24"
-    fill="none"
-    xmlns="http://www.w3.org/2000/svg"
-    className={`${className} shrink-0`}
-  >
+  <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={`${className} shrink-0`}>
     <path
       fill="#E95420"
       d="M17.61.455a3.41 3.41 0 0 0-3.41 3.41 3.41 3.41 0 0 0 3.41 3.41 3.41 3.41 0 0 0 3.41-3.41 3.41 3.41 0 0 0-3.41-3.41zM12.92.8C8.923.777 5.137 2.941 3.148 6.451a4.5 4.5 0 0 1 .26-.007 4.92 4.92 0 0 1 2.585.737A8.316 8.316 0 0 1 12.688 3.6 4.944 4.944 0 0 1 13.723.834 11.008 11.008 0 0 0 12.92.8zm9.226 4.994a4.915 4.915 0 0 1-1.918 2.246 8.36 8.36 0 0 1-.273 8.303 4.89 4.89 0 0 1 1.632 2.54 11.156 11.156 0 0 0 .559-13.089zM3.41 7.932A3.41 3.41 0 0 0 0 11.342a3.41 3.41 0 0 0 3.41 3.409 3.41 3.41 0 0 0 3.41-3.41 3.41 3.41 0 0 0-3.41-3.41zm2.027 7.866a4.908 4.908 0 0 1-2.915.358 11.1 11.1 0 0 0 7.991 6.698 11.234 11.234 0 0 0 2.422.249 4.879 4.879 0 0 1-.999-2.85 8.484 8.484 0 0 1-.836-.136 8.304 8.304 0 0 1-5.663-4.32zm11.405.928a3.41 3.41 0 0 0-3.41 3.41 3.41 3.41 0 0 0 3.41 3.41 3.41 3.41 0 0 0 3.41-3.41 3.41 3.41 0 0 0-3.41-3.41z"
@@ -84,12 +58,7 @@ export const WslIcon: React.FC<{ className?: string }> = ({ className = 'w-3.5 h
  * Claude Code CLI icon (official Anthropic Claude sunburst glyph)
  */
 export const ClaudeIcon: React.FC<{ className?: string }> = ({ className = 'w-3.5 h-3.5' }) => (
-  <svg
-    viewBox="0 0 24 24"
-    xmlns="http://www.w3.org/2000/svg"
-    className={`${className} shrink-0`}
-    aria-hidden="true"
-  >
+  <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" className={`${className} shrink-0`} aria-hidden="true">
     <path
       d="M4.709 15.955l4.72-2.647.08-.23-.08-.128H9.2l-.79-.048-2.698-.073-2.339-.097-2.266-.122-.571-.121L0 11.784l.055-.352.48-.321.686.06 1.52.103 2.278.158 1.652.097 2.449.255h.389l.055-.157-.134-.098-.103-.097-2.358-1.596-2.552-1.688-1.336-.972-.724-.491-.364-.462-.158-1.008.656-.722.881.06.225.061.893.686 1.908 1.476 2.491 1.833.365.304.145-.103.019-.073-.164-.274-1.355-2.446-1.446-2.49-.644-1.032-.17-.619a2.97 2.97 0 01-.104-.729L6.283.134 6.696 0l.996.134.42.364.62 1.414 1.002 2.229 1.555 3.03.456.898.243.832.091.255h.158V9.01l.128-1.706.237-2.095.23-2.695.08-.76.376-.91.747-.492.584.28.48.685-.067.444-.286 1.851-.559 2.903-.364 1.942h.212l.243-.242.985-1.306 1.652-2.064.73-.82.85-.904.547-.431h1.033l.76 1.129-.34 1.166-1.064 1.347-.881 1.142-1.264 1.7-.79 1.36.073.11.188-.02 2.856-.606 1.543-.28 1.841-.315.833.388.091.395-.328.807-1.969.486-2.309.462-3.439.813-.042.03.049.061 1.549.146.662.036h1.622l3.02.225.79.522.474.638-.079.485-1.215.62-1.64-.389-3.829-.91-1.312-.329h-.182v.11l1.093 1.068 2.006 1.81 2.509 2.33.127.578-.322.455-.34-.049-2.205-1.657-.851-.747-1.926-1.62h-.128v.17l.444.649 2.345 3.521.122 1.08-.17.353-.608.213-.668-.122-1.374-1.925-1.415-2.167-1.143-1.943-.14.08-.674 7.254-.316.37-.729.28-.607-.461-.322-.747.322-1.476.389-1.924.315-1.53.286-1.9.17-.632-.012-.042-.14.018-1.434 1.967-2.18 2.945-1.726 1.845-.414.164-.717-.37.067-.662.401-.589 2.388-3.036 1.44-1.882.93-1.086-.006-.158h-.055L4.132 18.56l-1.13.146-.487-.456.061-.746.231-.243 1.908-1.312-.006.006z"
       fill="#D97757"
@@ -196,57 +165,145 @@ export const GeminiIcon: React.FC<{ className?: string }> = ({ className = 'w-3.
         </g>
       </g>
       <defs>
-        <filter id={`${uid}-f0`} x="-19.824" y="13.152" width="39.274" height="43.217" filterUnits="userSpaceOnUse" colorInterpolationFilters="sRGB">
+        <filter
+          id={`${uid}-f0`}
+          x="-19.824"
+          y="13.152"
+          width="39.274"
+          height="43.217"
+          filterUnits="userSpaceOnUse"
+          colorInterpolationFilters="sRGB"
+        >
           <feFlood floodOpacity="0" result="BackgroundImageFix" />
           <feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape" />
           <feGaussianBlur stdDeviation="2.46" result="effect1_foregroundBlur" />
         </filter>
-        <filter id={`${uid}-f1`} x="-15.001" y="-40.257" width="84.868" height="85.688" filterUnits="userSpaceOnUse" colorInterpolationFilters="sRGB">
+        <filter
+          id={`${uid}-f1`}
+          x="-15.001"
+          y="-40.257"
+          width="84.868"
+          height="85.688"
+          filterUnits="userSpaceOnUse"
+          colorInterpolationFilters="sRGB"
+        >
           <feFlood floodOpacity="0" result="BackgroundImageFix" />
           <feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape" />
           <feGaussianBlur stdDeviation="11.891" result="effect1_foregroundBlur" />
         </filter>
-        <filter id={`${uid}-f2`} x="-20.776" y="11.927" width="79.454" height="90.916" filterUnits="userSpaceOnUse" colorInterpolationFilters="sRGB">
+        <filter
+          id={`${uid}-f2`}
+          x="-20.776"
+          y="11.927"
+          width="79.454"
+          height="90.916"
+          filterUnits="userSpaceOnUse"
+          colorInterpolationFilters="sRGB"
+        >
           <feFlood floodOpacity="0" result="BackgroundImageFix" />
           <feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape" />
           <feGaussianBlur stdDeviation="10.109" result="effect1_foregroundBlur" />
         </filter>
-        <filter id={`${uid}-f3`} x="-20.776" y="11.927" width="79.454" height="90.916" filterUnits="userSpaceOnUse" colorInterpolationFilters="sRGB">
+        <filter
+          id={`${uid}-f3`}
+          x="-20.776"
+          y="11.927"
+          width="79.454"
+          height="90.916"
+          filterUnits="userSpaceOnUse"
+          colorInterpolationFilters="sRGB"
+        >
           <feFlood floodOpacity="0" result="BackgroundImageFix" />
           <feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape" />
           <feGaussianBlur stdDeviation="10.109" result="effect1_foregroundBlur" />
         </filter>
-        <filter id={`${uid}-f4`} x="-19.845" y="15.459" width="79.731" height="81.505" filterUnits="userSpaceOnUse" colorInterpolationFilters="sRGB">
+        <filter
+          id={`${uid}-f4`}
+          x="-19.845"
+          y="15.459"
+          width="79.731"
+          height="81.505"
+          filterUnits="userSpaceOnUse"
+          colorInterpolationFilters="sRGB"
+        >
           <feFlood floodOpacity="0" result="BackgroundImageFix" />
           <feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape" />
           <feGaussianBlur stdDeviation="10.109" result="effect1_foregroundBlur" />
         </filter>
-        <filter id={`${uid}-f5`} x="29.832" y="-11.552" width="75.117" height="73.758" filterUnits="userSpaceOnUse" colorInterpolationFilters="sRGB">
+        <filter
+          id={`${uid}-f5`}
+          x="29.832"
+          y="-11.552"
+          width="75.117"
+          height="73.758"
+          filterUnits="userSpaceOnUse"
+          colorInterpolationFilters="sRGB"
+        >
           <feFlood floodOpacity="0" result="BackgroundImageFix" />
           <feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape" />
           <feGaussianBlur stdDeviation="9.606" result="effect1_foregroundBlur" />
         </filter>
-        <filter id={`${uid}-f6`} x="-38.583" y="-16.253" width="78.135" height="78.758" filterUnits="userSpaceOnUse" colorInterpolationFilters="sRGB">
+        <filter
+          id={`${uid}-f6`}
+          x="-38.583"
+          y="-16.253"
+          width="78.135"
+          height="78.758"
+          filterUnits="userSpaceOnUse"
+          colorInterpolationFilters="sRGB"
+        >
           <feFlood floodOpacity="0" result="BackgroundImageFix" />
           <feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape" />
           <feGaussianBlur stdDeviation="8.706" result="effect1_foregroundBlur" />
         </filter>
-        <filter id={`${uid}-f7`} x="8.107" y="-5.966" width="78.877" height="77.539" filterUnits="userSpaceOnUse" colorInterpolationFilters="sRGB">
+        <filter
+          id={`${uid}-f7`}
+          x="8.107"
+          y="-5.966"
+          width="78.877"
+          height="77.539"
+          filterUnits="userSpaceOnUse"
+          colorInterpolationFilters="sRGB"
+        >
           <feFlood floodOpacity="0" result="BackgroundImageFix" />
           <feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape" />
           <feGaussianBlur stdDeviation="7.775" result="effect1_foregroundBlur" />
         </filter>
-        <filter id={`${uid}-f8`} x="13.587" y="-18.488" width="56.272" height="51.81" filterUnits="userSpaceOnUse" colorInterpolationFilters="sRGB">
+        <filter
+          id={`${uid}-f8`}
+          x="13.587"
+          y="-18.488"
+          width="56.272"
+          height="51.81"
+          filterUnits="userSpaceOnUse"
+          colorInterpolationFilters="sRGB"
+        >
           <feFlood floodOpacity="0" result="BackgroundImageFix" />
           <feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape" />
           <feGaussianBlur stdDeviation="6.957" result="effect1_foregroundBlur" />
         </filter>
-        <filter id={`${uid}-f9`} x="-15.526" y="-31.297" width="70.856" height="69.306" filterUnits="userSpaceOnUse" colorInterpolationFilters="sRGB">
+        <filter
+          id={`${uid}-f9`}
+          x="-15.526"
+          y="-31.297"
+          width="70.856"
+          height="69.306"
+          filterUnits="userSpaceOnUse"
+          colorInterpolationFilters="sRGB"
+        >
           <feFlood floodOpacity="0" result="BackgroundImageFix" />
           <feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape" />
           <feGaussianBlur stdDeviation="5.876" result="effect1_foregroundBlur" />
         </filter>
-        <filter id={`${uid}-f10`} x="-14.168" y="20.964" width="55.501" height="51.571" filterUnits="userSpaceOnUse" colorInterpolationFilters="sRGB">
+        <filter
+          id={`${uid}-f10`}
+          x="-14.168"
+          y="20.964"
+          width="55.501"
+          height="51.571"
+          filterUnits="userSpaceOnUse"
+          colorInterpolationFilters="sRGB"
+        >
           <feFlood floodOpacity="0" result="BackgroundImageFix" />
           <feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape" />
           <feGaussianBlur stdDeviation="7.273" result="effect1_foregroundBlur" />
@@ -461,37 +518,125 @@ export const AntigravityIcon: React.FC<{ className?: string }> = ({ className = 
         </g>
       </g>
       <defs>
-        <filter id={`${uid}-f0`} x="4.09591" y="-44.1761" width="111.037" height="98.4416" filterUnits="userSpaceOnUse" colorInterpolationFilters="sRGB">
+        <filter
+          id={`${uid}-f0`}
+          x="4.09591"
+          y="-44.1761"
+          width="111.037"
+          height="98.4416"
+          filterUnits="userSpaceOnUse"
+          colorInterpolationFilters="sRGB"
+        >
           <feGaussianBlur stdDeviation="6.25234" />
         </filter>
-        <filter id={`${uid}-f1`} x="46.2974" y="-53.0009" width="217.731" height="215.86" filterUnits="userSpaceOnUse" colorInterpolationFilters="sRGB">
+        <filter
+          id={`${uid}-f1`}
+          x="46.2974"
+          y="-53.0009"
+          width="217.731"
+          height="215.86"
+          filterUnits="userSpaceOnUse"
+          colorInterpolationFilters="sRGB"
+        >
           <feGaussianBlur stdDeviation="30.2268" />
         </filter>
-        <filter id={`${uid}-f2`} x="-100.018" y="-36.7558" width="229.238" height="204.397" filterUnits="userSpaceOnUse" colorInterpolationFilters="sRGB">
+        <filter
+          id={`${uid}-f2`}
+          x="-100.018"
+          y="-36.7558"
+          width="229.238"
+          height="204.397"
+          filterUnits="userSpaceOnUse"
+          colorInterpolationFilters="sRGB"
+        >
           <feGaussianBlur stdDeviation="25.6957" />
         </filter>
-        <filter id={`${uid}-f3`} x="-100.018" y="-36.7558" width="229.238" height="204.397" filterUnits="userSpaceOnUse" colorInterpolationFilters="sRGB">
+        <filter
+          id={`${uid}-f3`}
+          x="-100.018"
+          y="-36.7558"
+          width="229.238"
+          height="204.397"
+          filterUnits="userSpaceOnUse"
+          colorInterpolationFilters="sRGB"
+        >
           <feGaussianBlur stdDeviation="25.6957" />
         </filter>
-        <filter id={`${uid}-f4`} x="-84.3985" y="-35.003" width="205.042" height="204.834" filterUnits="userSpaceOnUse" colorInterpolationFilters="sRGB">
+        <filter
+          id={`${uid}-f4`}
+          x="-84.3985"
+          y="-35.003"
+          width="205.042"
+          height="204.834"
+          filterUnits="userSpaceOnUse"
+          colorInterpolationFilters="sRGB"
+        >
           <feGaussianBlur stdDeviation="25.6957" />
         </filter>
-        <filter id={`${uid}-f5`} x="27.9915" y="71.5493" width="187.691" height="190.791" filterUnits="userSpaceOnUse" colorInterpolationFilters="sRGB">
+        <filter
+          id={`${uid}-f5`}
+          x="27.9915"
+          y="71.5493"
+          width="187.691"
+          height="190.791"
+          filterUnits="userSpaceOnUse"
+          colorInterpolationFilters="sRGB"
+        >
           <feGaussianBlur stdDeviation="24.4184" />
         </filter>
-        <filter id={`${uid}-f6`} x="-11.8808" y="-98.7085" width="201.38" height="197.45" filterUnits="userSpaceOnUse" colorInterpolationFilters="sRGB">
+        <filter
+          id={`${uid}-f6`}
+          x="-11.8808"
+          y="-98.7085"
+          width="201.38"
+          height="197.45"
+          filterUnits="userSpaceOnUse"
+          colorInterpolationFilters="sRGB"
+        >
           <feGaussianBlur stdDeviation="22.1301" />
         </filter>
-        <filter id={`${uid}-f7`} x="-44.4432" y="19.9522" width="252.513" height="260.404" filterUnits="userSpaceOnUse" colorInterpolationFilters="sRGB">
+        <filter
+          id={`${uid}-f7`}
+          x="-44.4432"
+          y="19.9522"
+          width="252.513"
+          height="260.404"
+          filterUnits="userSpaceOnUse"
+          colorInterpolationFilters="sRGB"
+        >
           <feGaussianBlur stdDeviation="19.7631" />
         </filter>
-        <filter id={`${uid}-f8`} x="81.1915" y="25.7722" width="140.46" height="134.637" filterUnits="userSpaceOnUse" colorInterpolationFilters="sRGB">
+        <filter
+          id={`${uid}-f8`}
+          x="81.1915"
+          y="25.7722"
+          width="140.46"
+          height="134.637"
+          filterUnits="userSpaceOnUse"
+          colorInterpolationFilters="sRGB"
+        >
           <feGaussianBlur stdDeviation="17.6843" />
         </filter>
-        <filter id={`${uid}-f9`} x="55.1499" y="-47.2531" width="187.555" height="167.957" filterUnits="userSpaceOnUse" colorInterpolationFilters="sRGB">
+        <filter
+          id={`${uid}-f9`}
+          x="55.1499"
+          y="-47.2531"
+          width="187.555"
+          height="167.957"
+          filterUnits="userSpaceOnUse"
+          colorInterpolationFilters="sRGB"
+        >
           <feGaussianBlur stdDeviation="14.9365" />
         </filter>
-        <filter id={`${uid}-f10`} x="-24.2633" y="-27.1515" width="124.223" height="146.372" filterUnits="userSpaceOnUse" colorInterpolationFilters="sRGB">
+        <filter
+          id={`${uid}-f10`}
+          x="-24.2633"
+          y="-27.1515"
+          width="124.223"
+          height="146.372"
+          filterUnits="userSpaceOnUse"
+          colorInterpolationFilters="sRGB"
+        >
           <feGaussianBlur stdDeviation="18.4865" />
         </filter>
       </defs>
@@ -499,7 +644,20 @@ export const AntigravityIcon: React.FC<{ className?: string }> = ({ className = 
   );
 };
 
-export type TerminalType = 'git-bash' | 'powershell' | 'cmd' | 'wsl' | 'claude' | 'gemini' | 'aider' | 'codex' | 'opencode' | 'droid' | 'antigravity' | 'agent' | 'terminal';
+export type TerminalType =
+  | 'git-bash'
+  | 'powershell'
+  | 'cmd'
+  | 'wsl'
+  | 'claude'
+  | 'gemini'
+  | 'aider'
+  | 'codex'
+  | 'opencode'
+  | 'droid'
+  | 'antigravity'
+  | 'agent'
+  | 'terminal';
 
 const AGENT_TYPES: Record<string, TerminalType> = {
   claude_code: 'claude',
@@ -513,7 +671,10 @@ const AGENT_TYPES: Record<string, TerminalType> = {
 
 /** Match whole words only, so a folder like "android" or "strategy" is not Droid or agy. */
 function agentFromName(name: string): TerminalType | null {
-  const words = name.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  const words = name
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
   const has = (word: string) => words.includes(word);
   if (has('claude')) return 'claude';
   if (has('gemini')) return 'gemini';
@@ -550,7 +711,11 @@ export function detectTerminalType(params: {
   const agentType = params.agentType;
   if (typeof agentType === 'string' && AGENT_TYPES[agentType]) return AGENT_TYPES[agentType];
 
-  const executable = (params.shell || '').replace(/\\/g, '/').split('/').pop()!.replace(/\.exe$/i, '');
+  const executable = (params.shell || '')
+    .replace(/\\/g, '/')
+    .split('/')
+    .pop()!
+    .replace(/\.exe$/i, '');
   const name = (params.title || '').split(' (')[0];
 
   const agent = agentFromName(executable);

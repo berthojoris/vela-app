@@ -52,9 +52,18 @@ export const useDiffStore = create<DiffState>((set, get) => ({
     if (get().isCommitting || get().isRollingBack) return;
     ++requestSequence;
     set({
-      isOpen: true, worktreePath: path, diffs: [], selectedFile: null,
-      isLoading: false, isRollingBack: false, rollingBackFile: null,
-      error: null, commitError: null, rollbackError: null, commitMessage: '', commitResult: null,
+      isOpen: true,
+      worktreePath: path,
+      diffs: [],
+      selectedFile: null,
+      isLoading: false,
+      isRollingBack: false,
+      rollingBackFile: null,
+      error: null,
+      commitError: null,
+      rollbackError: null,
+      commitMessage: '',
+      commitResult: null,
     });
     await get().refreshDiffs();
   },
@@ -75,7 +84,11 @@ export const useDiffStore = create<DiffState>((set, get) => ({
         isLoading: false,
       });
     } catch (error) {
-      if (current()) set({ isLoading: false, error: errorMessage(error, 'Unable to inspect changes. Check that the worktree still exists, then refresh.') });
+      if (current())
+        set({
+          isLoading: false,
+          error: errorMessage(error, 'Unable to inspect changes. Check that the worktree still exists, then refresh.'),
+        });
     }
   },
 
@@ -83,9 +96,18 @@ export const useDiffStore = create<DiffState>((set, get) => ({
     if (get().isCommitting || get().isRollingBack) return;
     ++requestSequence;
     set({
-      isOpen: false, worktreePath: null, diffs: [], selectedFile: null,
-      isLoading: false, isRollingBack: false, rollingBackFile: null,
-      error: null, commitError: null, rollbackError: null, commitMessage: '', commitResult: null,
+      isOpen: false,
+      worktreePath: null,
+      diffs: [],
+      selectedFile: null,
+      isLoading: false,
+      isRollingBack: false,
+      rollingBackFile: null,
+      error: null,
+      commitError: null,
+      rollbackError: null,
+      commitMessage: '',
+      commitResult: null,
     });
   },
   selectFile: (file) => {

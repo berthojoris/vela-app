@@ -21,9 +21,11 @@ export const useNoticeStore = create<{
     if (!useNoticeStore.getState().notices.some((notice) => notice.message === message)) {
       void tauriIpc.reportError?.(message).catch((error) => console.error('Unable to write diagnostic log', error));
     }
-    set((state) => state.notices.some((notice) => notice.message === message)
-      ? state
-      : { notices: [...state.notices.slice(-3), { id: ++sequence, message }] });
+    set((state) =>
+      state.notices.some((notice) => notice.message === message)
+        ? state
+        : { notices: [...state.notices.slice(-3), { id: ++sequence, message }] }
+    );
   },
   dismiss: (id) => set((state) => ({ notices: state.notices.filter((notice) => notice.id !== id) })),
 }));

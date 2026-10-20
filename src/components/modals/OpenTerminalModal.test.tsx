@@ -12,7 +12,12 @@ import { OpenTerminalModal } from './OpenTerminalModal';
 beforeEach(() => {
   useTerminalStore.setState(useTerminalStore.getInitialState());
   useWorktreeStore.setState(useWorktreeStore.getInitialState());
-  useTerminalStore.setState({ defaultProfileId: 'cmd', profiles: [{ id: 'cmd', name: 'Command Prompt', executable: 'cmd.exe', args: [], is_agent: false, agent_type: null }] });
+  useTerminalStore.setState({
+    defaultProfileId: 'cmd',
+    profiles: [
+      { id: 'cmd', name: 'Command Prompt', executable: 'cmd.exe', args: [], is_agent: false, agent_type: null },
+    ],
+  });
   ipc.spawnTerminal.mockReset();
 });
 it('shows launch errors inline and keeps input available for retry', async () => {
@@ -37,7 +42,10 @@ it('submits once and does not close on Escape while startup is pending', async (
   fireEvent.keyDown(window, { key: 'Escape' });
   expect(ipc.spawnTerminal).toHaveBeenCalledTimes(1);
   expect(close).not.toHaveBeenCalled();
-  await act(async () => { pending.resolve(session('new')); await pending.promise; });
+  await act(async () => {
+    pending.resolve(session('new'));
+    await pending.promise;
+  });
   await waitFor(() => expect(close).toHaveBeenCalledTimes(1));
 });
 it('does not silently replace a missing requested agent with PowerShell', () => {

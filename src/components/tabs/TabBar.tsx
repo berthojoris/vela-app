@@ -24,13 +24,16 @@ export const TabBar: React.FC<TabBarProps> = ({ onOpenTerminalModal }) => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
 
-  const handleCloseSession = useCallback(async (id: string) => {
-    try {
-      await closeSession(id);
-    } catch (err: any) {
-      useNoticeStore.getState().report('Unable to close terminal', err);
-    }
-  }, [closeSession]);
+  const handleCloseSession = useCallback(
+    async (id: string) => {
+      try {
+        await closeSession(id);
+      } catch (err) {
+        useNoticeStore.getState().report('Unable to close terminal', err);
+      }
+    },
+    [closeSession]
+  );
 
   // Global Ctrl+T shortcut: opens Directory & Launch Modal
   useEffect(() => {
@@ -82,10 +85,10 @@ export const TabBar: React.FC<TabBarProps> = ({ onOpenTerminalModal }) => {
               title={session.exited ? `${session.title} — Process completed` : session.title}
               className={`group h-7 px-2.5 rounded flex items-center gap-2 text-xs cursor-pointer transition-all border shrink-0 max-w-[210px] ${
                 isActive
-                  ? 'bg-orca-card border-orca-borderLight text-white font-medium shadow-sm'
+                  ? 'bg-orca-card border-orca-borderLight text-white font-medium'
                   : isSecondary
-                  ? 'bg-orca-dark/60 border-orca-accent/40 text-orca-text'
-                  : 'bg-transparent border-transparent text-orca-muted hover:text-orca-text hover:bg-orca-hover'
+                    ? 'bg-orca-dark/60 border-orca-accent/40 text-orca-text'
+                    : 'bg-transparent border-transparent text-orca-muted hover:text-orca-text hover:bg-orca-hover'
               }`}
             >
               <TerminalIcon
@@ -96,10 +99,7 @@ export const TabBar: React.FC<TabBarProps> = ({ onOpenTerminalModal }) => {
                 className="w-3.5 h-3.5 shrink-0"
               />
               {session.exited && (
-                <span
-                  className="w-1.5 h-1.5 rounded-full bg-orca-muted shrink-0"
-                  aria-label="Process completed"
-                />
+                <span className="w-1.5 h-1.5 rounded-full bg-orca-muted shrink-0" aria-label="Process completed" />
               )}
 
               {editingId === session.id ? (
@@ -158,8 +158,8 @@ export const TabBar: React.FC<TabBarProps> = ({ onOpenTerminalModal }) => {
             splitMode === 'vertical'
               ? 'bg-orca-card border-orca-border text-white'
               : sessions.length < 2
-              ? 'opacity-30 cursor-not-allowed border-transparent text-orca-muted'
-              : 'border-transparent text-orca-muted hover:text-white hover:bg-orca-hover'
+                ? 'opacity-30 cursor-not-allowed border-transparent text-orca-muted'
+                : 'border-transparent text-orca-muted hover:text-white hover:bg-orca-hover'
           }`}
           title="Split Vertically"
         >
@@ -173,8 +173,8 @@ export const TabBar: React.FC<TabBarProps> = ({ onOpenTerminalModal }) => {
             splitMode === 'horizontal'
               ? 'bg-orca-card border-orca-border text-white'
               : sessions.length < 2
-              ? 'opacity-30 cursor-not-allowed border-transparent text-orca-muted'
-              : 'border-transparent text-orca-muted hover:text-white hover:bg-orca-hover'
+                ? 'opacity-30 cursor-not-allowed border-transparent text-orca-muted'
+                : 'border-transparent text-orca-muted hover:text-white hover:bg-orca-hover'
           }`}
           title="Split Horizontally"
         >

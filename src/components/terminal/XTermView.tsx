@@ -25,7 +25,7 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive }) => 
     if (!containerRef.current) return;
     let disposed = false;
     let exited = Boolean(useTerminalStore.getState().sessions.find((session) => session.id === sessionId)?.exited);
-    let fitTimer: ReturnType<typeof setTimeout> | undefined;
+
     let resizeFrame = 0;
     let lastSize = '';
     let writing = false;
@@ -34,7 +34,9 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive }) => 
       if (!disposed && !exited) {
         const message = errorMessage(error);
         setStreamError(message);
-        void tauriIpc.reportError(`Terminal ${sessionId}: ${message}`).catch((error) => console.error('Unable to write diagnostic log', error));
+        void tauriIpc
+          .reportError(`Terminal ${sessionId}: ${message}`)
+          .catch((error) => console.error('Unable to write diagnostic log', error));
       }
     };
 
@@ -77,24 +79,31 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive }) => 
     term.loadAddon(new WebLinksAddon());
     term.loadAddon(new SearchAddon());
 
-    try { term.open(containerRef.current); }
-    catch (error) {
+    try {
+      term.open(containerRef.current);
+    } catch (error) {
       term.dispose();
       report(error);
-      void tauriIpc.killTerminal(sessionId).then(() => useTerminalStore.getState().markSessionExited(sessionId))
+      void tauriIpc
+        .killTerminal(sessionId)
+        .then(() => useTerminalStore.getState().markSessionExited(sessionId))
         .catch((error) => useNoticeStore.getState().report('Unable to stop terminal after renderer failure', error));
       return;
     }
 
     // Load the optional renderer separately; a GPU failure must not kill a usable terminal.
-    void import('@xterm/addon-webgl').then(({ WebglAddon }) => {
-      if (disposed) return;
-      try {
-        const addon = new WebglAddon();
-        addon.onContextLoss(() => addon.dispose());
-        term.loadAddon(addon);
-      } catch (error) { console.warn('Using the standard terminal renderer', error); }
-    }).catch((error) => console.warn('WebGL is unavailable; using the standard terminal renderer', error));
+    void import('@xterm/addon-webgl')
+      .then(({ WebglAddon }) => {
+        if (disposed) return;
+        try {
+          const addon = new WebglAddon();
+          addon.onContextLoss(() => addon.dispose());
+          term.loadAddon(addon);
+        } catch (error) {
+          console.warn('Using the standard terminal renderer', error);
+        }
+      })
+      .catch((error) => console.warn('WebGL is unavailable; using the standard terminal renderer', error));
 
     termRef.current = term;
     fitAddonRef.current = fitAddon;
@@ -107,9 +116,11 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive }) => 
         if (size === lastSize) return;
         lastSize = size;
         void tauriIpc.resizeTerminal(sessionId, term.cols, term.rows).catch(report);
-      } catch (error) { report(error); }
+      } catch (error) {
+        report(error);
+      }
     };
-    fitTimer = setTimeout(fit, 50);
+    const fitTimer = setTimeout(fit, 50);
 
     const cwdHandler = term.parser.registerOscHandler(7, (data) => {
       const cwd = cwdFromOsc7(data);
@@ -135,8 +146,12 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive }) => 
           queuedInput = queuedInput.slice(end);
           await tauriIpc.writeTerminal(sessionId, chunk);
         }
-      } catch (error) { queuedInput = ''; report(error); }
-      finally { writing = false; }
+      } catch (error) {
+        queuedInput = '';
+        report(error);
+      } finally {
+        writing = false;
+      }
     };
 
     // Terminal data input listener (keyboard -> Rust PTY)
@@ -147,13 +162,7 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive }) => 
     // Let Ctrl+V / Ctrl+Shift+V fall through to the browser paste event
     // instead of xterm sending a raw ^V, so the paste handler below decides.
     term.attachCustomKeyEventHandler((e) => {
-      if (
-        e.type === 'keydown' &&
-        e.ctrlKey &&
-        !e.altKey &&
-        !e.metaKey &&
-        e.key.toLowerCase() === 'v'
-      ) {
+      if (e.type === 'keydown' && e.ctrlKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === 'v') {
         return false;
       }
       // Intercept Shift+Enter: xterm's default '\r' submits the prompt. Send a Win32 key
@@ -164,19 +173,8 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive }) => 
       // record carrying '\r' reaches VT readers as plain Enter.
       // Calling preventDefault and stopPropagation ensures the browser does not insert text into
       // xterm's hidden textarea (which would trigger secondary onData emissions).
-      const isEnter =
-        e.key === 'Enter' ||
-        e.code === 'Enter' ||
-        e.code === 'NumpadEnter' ||
-        e.keyCode === 13;
-      if (
-        isEnter &&
-        e.shiftKey &&
-        !e.ctrlKey &&
-        !e.altKey &&
-        !e.metaKey &&
-        !e.isComposing
-      ) {
+      const isEnter = e.key === 'Enter' || e.code === 'Enter' || e.code === 'NumpadEnter' || e.keyCode === 13;
+      if (isEnter && e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && !e.isComposing) {
         e.preventDefault();
         e.stopPropagation();
         if (e.type === 'keydown') {
@@ -207,9 +205,7 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive }) => 
     const handlePaste = (e: ClipboardEvent) => {
       const data = e.clipboardData;
       if (!data || data.getData('text/plain')) return;
-      const hasImage = Array.from(data.items).some(
-        (item) => item.kind === 'file' && item.type.startsWith('image/')
-      );
+      const hasImage = Array.from(data.items).some((item) => item.kind === 'file' && item.type.startsWith('image/'));
       // Empty pastes (image-only clipboard exposed without a file item, or a
       // terminal-style paste of an unsupported payload) reach here the same
       // way, and the agent still needs the key to read the clipboard itself.
@@ -258,9 +254,14 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive }) => 
         const errorUnlisten = await tauriIpc.onPtyError(sessionId, (message) => {
           if (disposed) return;
           report(message);
-          void tauriIpc.killTerminal(sessionId).catch((error) => useNoticeStore.getState().report('Unable to stop failed terminal', error));
+          void tauriIpc
+            .killTerminal(sessionId)
+            .catch((error) => useNoticeStore.getState().report('Unable to stop failed terminal', error));
         });
-        if (disposed) { errorUnlisten(); return; }
+        if (disposed) {
+          errorUnlisten();
+          return;
+        }
         unlistenPtyError = errorUnlisten;
 
         await tauriIpc.startTerminalOutput(sessionId);
@@ -269,9 +270,12 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive }) => 
         console.error('Failed to connect terminal output stream', error);
         report(error);
         term.writeln('\r\n\x1b[31m[Unable to start terminal output stream]\x1b[0m');
-        void tauriIpc.killTerminal(sessionId).then(() => useTerminalStore.getState().markSessionExited(sessionId)).catch((killError) => {
-          useNoticeStore.getState().report('Unable to stop terminal after stream setup failed', killError);
-        });
+        void tauriIpc
+          .killTerminal(sessionId)
+          .then(() => useTerminalStore.getState().markSessionExited(sessionId))
+          .catch((killError) => {
+            useNoticeStore.getState().report('Unable to stop terminal after stream setup failed', killError);
+          });
       }
     };
     void connectPty();
@@ -308,7 +312,11 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive }) => 
       termRef.current.focus();
       if (fitAddonRef.current) {
         timer = setTimeout(() => {
-          try { fitAddonRef.current?.fit(); } catch (error) { setStreamError(errorMessage(error)); }
+          try {
+            fitAddonRef.current?.fit();
+          } catch (error) {
+            setStreamError(errorMessage(error));
+          }
         }, 20);
       }
     }
@@ -317,16 +325,23 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive }) => 
 
   return (
     <div className="w-full h-full relative">
-    {streamError && <div role="alert" className="absolute z-10 inset-x-2 top-2 p-3 bg-orca-darker border border-orca-rose/40 rounded-md text-sm text-orca-text break-words select-text">
-      <span>{streamError}</span>
-      <button type="button" className="ml-3 underline" onClick={() => setStreamError(null)}>Dismiss</button>
-    </div>}
-    <div
-      ref={containerRef}
-      className={`w-full h-full bg-orca-darkest overflow-hidden ${
-        isActive ? 'ring-1 ring-orca-borderLight' : 'opacity-85'
-      }`}
-    />
+      {streamError && (
+        <div
+          role="alert"
+          className="absolute z-10 inset-x-2 top-2 p-3 bg-orca-darker border border-orca-rose/40 rounded-md text-sm text-orca-text break-words select-text"
+        >
+          <span>{streamError}</span>
+          <button type="button" className="ml-3 underline" onClick={() => setStreamError(null)}>
+            Dismiss
+          </button>
+        </div>
+      )}
+      <div
+        ref={containerRef}
+        className={`w-full h-full bg-orca-darkest overflow-hidden ${
+          isActive ? 'ring-1 ring-orca-borderLight' : 'opacity-85'
+        }`}
+      />
     </div>
   );
 };
