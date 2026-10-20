@@ -47,6 +47,19 @@ npx @tauri-apps/cli build --no-bundle
 
 Release executable: `src-tauri/target/release/vela.exe`. Bundling is disabled; this command does not create an installer. Close a running release copy before rebuilding it.
 
+### Windows installer (NSIS, x64)
+
+Bundling is off in `src-tauri/tauri.conf.json`; the installer is produced with a config override:
+
+```powershell
+# 1. bump the version in all 5 files: src-tauri/tauri.conf.json, src-tauri/Cargo.toml,
+#    src-tauri/Cargo.lock, package.json, package-lock.json  (see AGENTS.md)
+# 2. run the checks above
+npx @tauri-apps/cli build --config src-tauri/tauri.bundle.json
+```
+
+Output: `src-tauri/target/release/bundle/nsis/Vela_<version>_x64-setup.exe` (installs to `%LOCALAPPDATA%\Vela\`, per-user, no admin required). Run the new installer over the existing install to upgrade — the version bump is what makes the installer take the upgrade path instead of the reinstall path.
+
 The Windows CI workflow runs frontend lint/format checks/tests/build, Rust fmt/clippy/checks/tests, and the release build. Rust tests include real temporary Git worktree/diff/commit/remove operations and real Windows ConPTY input/output, natural exit, and shutdown. Frontend tests cover stale requests, duplicate submissions, launch retry, split focus, output acknowledgements, input limits, and directory metadata.
 
 `npm run test:ui` uses an installed Microsoft Edge in an isolated headless profile. It checks the browser-preview workspace at 1280×820 and 800×550, including real xterm layout, split focus, modal shortcuts, and recoverable errors. This does not replace interactive testing in the native WebView2 window. The test runner starts/stops its own Vite server; port 1420 must be free.
