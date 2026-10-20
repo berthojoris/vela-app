@@ -34,6 +34,16 @@ let syncSequence = 0;
 let refreshSequence = 0;
 let pendingRefresh: { repo: string; promise: Promise<void> } | null = null;
 
+// Remembers repository detection and worktree listings per directory so switching tabs
+// back to a visited directory applies the panel instantly: no spinner, no Git IPC.
+const repoRootCache = new Map<string, string>();
+const worktreeListCache = new Map<string, GitWorktree[]>();
+
+function cacheWorktreeList(repoPath: string, list: GitWorktree[]): void {
+  if (worktreeListCache.size > 32) worktreeListCache.clear();
+  worktreeListCache.set(normalizePath(repoPath), list);
+}
+
 function loadAutoGitStatus(): boolean {
   try {
     return localStorage.getItem('vela_auto_git_status') === 'true';
@@ -74,6 +84,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
 
   initRepo: async () => {
     ++syncSequence; ++refreshSequence; pendingRefresh = null;
+    repoRootCache.clear(); worktreeListCache.clear();
     set({ repoPath: null, worktrees: [], activeWorktreeId: null, activeSessionCwd: null, isLoading: false, error: null });
   },
   setRepoPath: async (path) => { await get().syncWithSession({ cwd: path }); },
@@ -107,16 +118,30 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
       }
     }
 
-    set({ activeSessionCwd: cwd, isLoading: true, error: null });
+    // Cached results let the panel swap instantly; with autoGitStatus OFF the sync
+    // never flashes the spinner, it just resolves quietly.
+    const knownRoot = repoRootCache.get(normCwd);
+    const knownList = knownRoot ? worktreeListCache.get(normalizePath(knownRoot)) : undefined;
+    const instant = !!knownRoot && (
+      previous.worktrees.some((worktree) => normalizePath(worktree.path) === normalizePath(knownRoot)) || !!knownList
+    );
+    set({ activeSessionCwd: cwd, isLoading: !instant && get().autoGitStatus, error: null });
     try {
-      const root = await tauriIpc.findGitRepo(cwd);
+      const root = knownRoot ?? (await tauriIpc.findGitRepo(cwd));
+      if (root) { if (repoRootCache.size > 64) repoRootCache.clear(); repoRootCache.set(normCwd, root); }
       if (request !== syncSequence) return;
       if (!root) {
         set({ repoPath: null, worktrees: [], activeWorktreeId: null, isLoading: false });
         return;
       }
       const sameRepo = previous.worktrees.some((worktree) => normalizePath(worktree.path) === normalizePath(root));
-      const list = sameRepo ? previous.worktrees : await tauriIpc.listWorktrees(root, get().autoGitStatus);
+      let list = sameRepo ? previous.worktrees : worktreeListCache.get(normalizePath(root));
+      let fetched = false;
+      if (!list) {
+        list = await tauriIpc.listWorktrees(root, get().autoGitStatus);
+        cacheWorktreeList(root, list);
+        fetched = true;
+      }
       if (request !== syncSequence) return;
       // Longest prefix wins for nested worktrees; findGitRepo above detects nested repositories too.
       const matched = [...list].sort((a, b) => b.path.length - a.path.length).find((worktree) => {
@@ -129,10 +154,13 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
         activeWorktreeId: matched?.id ?? list[0]?.id ?? null,
         isLoading: false,
       });
-      if (sameRepo && get().autoGitStatus) {
+      // When the list came from cache or memory, freshen it in the background so the toggle's ON behavior is unchanged.
+      if (get().autoGitStatus && !fetched) {
         void get().refreshWorktrees(true);
       }
     } catch (error) {
+      // Detection or listing failed: forget the cached root so the next switch re-checks Git.
+      repoRootCache.delete(normCwd);
       if (request === syncSequence) {
         set({
           isLoading: false,
@@ -154,6 +182,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
         const list = await tauriIpc.listWorktrees(repoPath, shouldCheckStatus);
         if (request !== refreshSequence || get().repoPath !== repoPath) return;
         const active = list.some((worktree) => worktree.id === get().activeWorktreeId) ? get().activeWorktreeId : list[0]?.id ?? null;
+        cacheWorktreeList(repoPath, list);
         set({ worktrees: list, activeWorktreeId: active, isLoading: false, error: null });
       } catch (error) {
         if (request === refreshSequence && get().repoPath === repoPath) {
@@ -180,10 +209,15 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
       const worktree = await tauriIpc.createWorktree(repoPath, branch, baseBranch);
       // Creation succeeded; a failed list refresh is not a failed creation and must not invite duplicate creation.
       if (context === syncSequence && get().repoPath === repoPath) {
-        set((state) => ({ worktrees: [...state.worktrees.filter((item) => item.id !== worktree.id), worktree], activeWorktreeId: worktree.id }));
+        const merged = [...get().worktrees.filter((item) => item.id !== worktree.id), worktree];
+        cacheWorktreeList(repoPath, merged);
+        set({ worktrees: merged, activeWorktreeId: worktree.id });
         try {
           const list = await tauriIpc.listWorktrees(repoPath);
-          if (context === syncSequence && get().repoPath === repoPath) set({ worktrees: list });
+          if (context === syncSequence && get().repoPath === repoPath) {
+            cacheWorktreeList(repoPath, list);
+            set({ worktrees: list });
+          }
         } catch (error) {
           if (context === syncSequence) set({ error: `Worktree created, but refresh failed: ${errorMessage(error)}` });
         }
@@ -205,6 +239,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
       await tauriIpc.removeWorktree(repoPath, worktreePath, force);
       if (context === syncSequence && get().repoPath === repoPath) {
         const list = get().worktrees.filter((item) => normalizePath(item.path) !== normalizePath(worktreePath));
+        cacheWorktreeList(repoPath, list);
         set({ worktrees: list, activeWorktreeId: list.some((item) => item.id === get().activeWorktreeId) ? get().activeWorktreeId : list[0]?.id ?? null });
       }
     } catch (error) {

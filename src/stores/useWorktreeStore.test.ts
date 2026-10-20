@@ -125,7 +125,8 @@ describe('autoGitStatus setting and tab switching behavior', () => {
     const stale = deferred<string | null>();
     ipc.findGitRepo.mockReturnValueOnce(stale.promise);
     const pending = store.getState().syncWithSession({ cwd: 'C:/B' });
-    expect(store.getState().isLoading).toBe(true);
+    // With autoGitStatus OFF the slow sync resolves quietly and never flashes the spinner.
+    expect(store.getState().isLoading).toBe(false);
 
     await store.getState().syncWithSession({ cwd: 'C:/A' });
     expect(store.getState().activeWorktreeId).toBe('A');
@@ -136,5 +137,88 @@ describe('autoGitStatus setting and tab switching behavior', () => {
     expect(store.getState().repoPath).toBe('C:/A');
     expect(store.getState().worktrees.map((item) => item.id)).toEqual(['A']);
     expect(ipc.listWorktrees).not.toHaveBeenCalled();
+  });
+
+  it('revisits a known repository without any Git IPC or spinner even when autoGitStatus is OFF', async () => {
+    store.setState({ repoPath: null, worktrees: [], autoGitStatus: false });
+    ipc.findGitRepo
+      .mockResolvedValueOnce('C:/RepoA')
+      .mockResolvedValueOnce('C:/RepoB');
+    ipc.listWorktrees
+      .mockResolvedValueOnce([worktree('A', 'C:/RepoA')])
+      .mockResolvedValueOnce([worktree('B', 'C:/RepoB')]);
+
+    await store.getState().syncWithSession({ cwd: 'C:/RepoA' });
+    await store.getState().syncWithSession({ cwd: 'C:/RepoB' });
+    expect(store.getState().repoPath).toBe('C:/RepoB');
+
+    ipc.findGitRepo.mockClear();
+    ipc.listWorktrees.mockClear();
+    await store.getState().syncWithSession({ cwd: 'C:/RepoA' });
+    expect(ipc.findGitRepo).not.toHaveBeenCalled();
+    expect(ipc.listWorktrees).not.toHaveBeenCalled();
+    expect(store.getState().isLoading).toBe(false);
+    expect(store.getState().repoPath).toBe('C:/RepoA');
+    expect(store.getState().activeWorktreeId).toBe('A');
+
+    await store.getState().syncWithSession({ cwd: 'C:/RepoB' });
+    expect(ipc.findGitRepo).not.toHaveBeenCalled();
+    expect(ipc.listWorktrees).not.toHaveBeenCalled();
+    expect(store.getState().repoPath).toBe('C:/RepoB');
+    expect(store.getState().activeWorktreeId).toBe('B');
+  });
+
+  it('never flashes the spinner while resolving an unknown directory with autoGitStatus OFF', async () => {
+    store.setState({ repoPath: null, worktrees: [], autoGitStatus: false });
+    const gate = deferred<string | null>();
+    ipc.findGitRepo.mockReturnValueOnce(gate.promise);
+    ipc.listWorktrees.mockResolvedValue([worktree('Late', 'C:/Late')]);
+
+    const pending = store.getState().syncWithSession({ cwd: 'C:/Late' });
+    expect(store.getState().isLoading).toBe(false);
+    gate.resolve('C:/Late');
+    await pending;
+    expect(store.getState().repoPath).toBe('C:/Late');
+    expect(store.getState().isLoading).toBe(false);
+  });
+
+  it('applies a cached repository instantly and background-refreshes it when autoGitStatus is ON', async () => {
+    store.setState({ repoPath: null, worktrees: [], autoGitStatus: true });
+    ipc.findGitRepo.mockResolvedValueOnce('C:/RepoC');
+    ipc.listWorktrees.mockResolvedValueOnce([worktree('C', 'C:/RepoC')]);
+    await store.getState().syncWithSession({ cwd: 'C:/RepoC' });
+
+    ipc.findGitRepo.mockResolvedValueOnce(null);
+    await store.getState().syncWithSession({ cwd: 'C:/plain' });
+    expect(store.getState().repoPath).toBe(null);
+
+    ipc.findGitRepo.mockClear();
+    ipc.listWorktrees.mockClear();
+    ipc.listWorktrees.mockResolvedValue([worktree('C', 'C:/RepoC')]);
+    await store.getState().syncWithSession({ cwd: 'C:/RepoC' });
+    expect(ipc.findGitRepo).not.toHaveBeenCalled();
+    expect(ipc.listWorktrees).toHaveBeenCalledWith('C:/RepoC', true);
+    expect(store.getState().repoPath).toBe('C:/RepoC');
+    expect(store.getState().activeWorktreeId).toBe('C');
+  });
+
+  it('keeps app-side worktree mutations visible in later cross-repo tab switches', async () => {
+    store.setState({ repoPath: 'C:/RepoA', worktrees: [worktree('A', 'C:/RepoA')], activeWorktreeId: 'A', autoGitStatus: false });
+    ipc.createWorktree.mockResolvedValue(worktree('task', 'C:/RepoA/task'));
+    ipc.listWorktrees.mockResolvedValue([worktree('A', 'C:/RepoA'), worktree('task', 'C:/RepoA/task')]);
+    await store.getState().createWorktree('task');
+
+    ipc.findGitRepo.mockResolvedValueOnce('C:/RepoB');
+    ipc.listWorktrees.mockResolvedValueOnce([worktree('B', 'C:/RepoB')]);
+    await store.getState().syncWithSession({ cwd: 'C:/RepoB' });
+
+    ipc.findGitRepo.mockClear();
+    ipc.findGitRepo.mockResolvedValue('C:/RepoA');
+    ipc.listWorktrees.mockClear();
+    await store.getState().syncWithSession({ cwd: 'C:/RepoA/task' });
+    expect(ipc.listWorktrees).not.toHaveBeenCalled();
+    expect(store.getState().repoPath).toBe('C:/RepoA');
+    expect(store.getState().worktrees.map((item) => item.id)).toContain('task');
+    expect(store.getState().activeWorktreeId).toBe('task');
   });
 });
