@@ -175,9 +175,6 @@ impl PtyManager {
         };
         let mut command = CommandBuilder::new(&resolved_shell);
         command.cwd(&cwd);
-        for arg in &args {
-            command.arg(arg);
-        }
         configure_shell(&mut command, &resolved_shell, &args);
         let pair = native_pty_system()
             .openpty(PtySize {
@@ -497,7 +494,7 @@ fn terminate_tree(session: &ActiveSession) -> Result<(), String> {
         .map_err(|error| format!("Cannot terminate terminal: {error}"))
 }
 
-/// Startup script for plain PowerShell tabs. It must only use core cmdlets and .NET
+/// Startup script for PowerShell tabs and agent hosts. It must only use core cmdlets and .NET
 /// calls: see `configure_shell` for why module lookups are avoided.
 const POWERSHELL_INIT: &str = concat!(
     "try { if (-not ${alias:oc} -and -not ${function:oc}) { function global:oc { opencode @args } } } catch {}; ",
@@ -515,7 +512,8 @@ const POWERSHELL_INIT: &str = concat!(
     "Set-PSReadLineKeyHandler -Chord 'Shift+Enter' -Function AddLine -ErrorAction SilentlyContinue; ",
     "Set-PSReadLineKeyHandler -Chord 'Ctrl+Enter' -Function AddLine -ErrorAction SilentlyContinue } } catch {}; ",
     "$global:__VelaOriginalPrompt = $function:prompt; function global:prompt { ",
-    "try { if ($PWD.Provider.Name -eq 'FileSystem') { $u = [uri]($PWD.ProviderPath + [IO.Path]::DirectorySeparatorChar); ",
+    "try { if ($PWD.Provider.Name -eq 'FileSystem') { $p = $PWD.ProviderPath; ",
+    "if (-not $p.EndsWith([IO.Path]::DirectorySeparatorChar)) { $p += [IO.Path]::DirectorySeparatorChar }; $u = [uri]$p; ",
     "[Console]::Write(([char]27) + ']7;' + $u.AbsoluteUri + ([char]7)) } } catch {} ; ",
     "if ($global:__VelaOriginalPrompt) { & $global:__VelaOriginalPrompt } else { 'PS ' + $PWD + '> ' } }",
 );
@@ -530,23 +528,12 @@ fn configure_shell(command: &mut CommandBuilder, shell: &str, args: &[String]) {
     if matches!(
         binary.as_str(),
         "pwsh" | "pwsh.exe" | "powershell" | "powershell.exe"
-    ) && args.iter().all(|arg| {
-        !matches!(
-            arg.to_ascii_lowercase().as_str(),
-            "-command" | "-c" | "-file" | "-f" | "-encodedcommand" | "-enc"
-        )
-    }) {
-        command.arg("-NoExit");
-        command.arg("-Command");
-        // XTermView sends Shift+Enter as a Win32 Shift+Enter key record. xterm sends
-        // Ctrl+J as '\n', which ConPTY reports as Ctrl+Enter (InsertLineAbove).
-        // Any by-name module lookup (`Get-Module -ListAvailable`, `Import-Module
-        // PSReadLine`, or autoloading a non-core cmdlet such as Set-Alias) probes every
-        // PSModulePath entry, and a Documents folder redirected to an unreachable share
-        // stalls startup for minutes. Load PSReadLine from its local install path using
-        // only core cmdlets and .NET; fall back to a by-name import only if it is absent.
-        command.arg(POWERSHELL_INIT);
-    } else if matches!(binary.as_str(), "cmd" | "cmd.exe") {
+    ) {
+        command.args(powershell_args(args));
+    } else {
+        command.args(args);
+    }
+    if matches!(binary.as_str(), "cmd" | "cmd.exe") {
         command.env(
             "PROMPT",
             format!(
@@ -560,9 +547,222 @@ fn configure_shell(command: &mut CommandBuilder, shell: &str, args: &[String]) {
     }
 }
 
+fn powershell_args(args: &[String]) -> Vec<String> {
+    if let Some(index) = args
+        .iter()
+        .position(|arg| matches!(arg.to_ascii_lowercase().as_str(), "-command" | "-c"))
+    {
+        if index + 2 == args.len() {
+            let mut result = args[..=index].to_vec();
+            result.push(format!("{POWERSHELL_INIT}; {}", args[index + 1]));
+            return result;
+        }
+        return args.to_vec();
+    }
+    if args.iter().all(|arg| {
+        !matches!(
+            arg.to_ascii_lowercase().as_str(),
+            "-command" | "-c" | "-file" | "-f" | "-encodedcommand" | "-enc"
+        )
+    }) {
+        // XTermView sends Shift+Enter as a Win32 Shift+Enter key record. xterm sends
+        // Ctrl+J as '\n', which ConPTY reports as Ctrl+Enter (InsertLineAbove).
+        // Any by-name module lookup (`Get-Module -ListAvailable`, `Import-Module
+        // PSReadLine`, or autoloading a non-core cmdlet such as Set-Alias) probes every
+        // PSModulePath entry, and a Documents folder redirected to an unreachable share
+        // stalls startup for minutes. Load PSReadLine from its local install path using
+        // only core cmdlets and .NET; fall back to a by-name import only if it is absent.
+        let mut result = args.to_vec();
+        result.extend(["-NoExit".into(), "-Command".into(), POWERSHELL_INIT.into()]);
+        result
+    } else {
+        args.to_vec()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Native console/PSReadLine initialization is timing-sensitive under concurrent startup.
+    #[cfg(windows)]
+    static CONPTY_TEST: Mutex<()> = Mutex::new(());
+    #[test]
+    fn agent_commands_receive_prompt_integration_without_changing_permission_flags() {
+        let args = vec![
+            "-NoExit".into(),
+            "-Command".into(),
+            "claude --dangerously-skip-permissions".into(),
+        ];
+        let integrated = powershell_args(&args);
+        assert_eq!(&integrated[..2], &args[..2]);
+        assert!(integrated[2].starts_with(POWERSHELL_INIT));
+        assert!(integrated[2].ends_with("; claude --dangerously-skip-permissions"));
+        let plain = vec!["-NoProfile".into(), "-File".into(), "script.ps1".into()];
+        assert_eq!(powershell_args(&plain), plain);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn fast_natural_exit_is_drained_after_delayed_output_gate() {
+        let _guard = CONPTY_TEST
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        use tauri::{Listener, Manager};
+        let app = tauri::test::mock_app();
+        let manager = PtyManager::new();
+        let id = format!("fast-exit-{}", uuid::Uuid::new_v4());
+        let collected = Arc::new(Mutex::new(Vec::new()));
+        let sink = collected.clone();
+        app.listen(format!("pty-output-{id}"), move |event| {
+            let bytes: Vec<u8> = serde_json::from_str(event.payload()).unwrap();
+            sink.lock().unwrap().extend(bytes);
+        });
+        let errors = Arc::new(Mutex::new(Vec::<String>::new()));
+        let error_sink = errors.clone();
+        app.listen(format!("pty-error-{id}"), move |event| {
+            error_sink.lock().unwrap().push(event.payload().to_string());
+        });
+        let (tx, rx) = mpsc::channel();
+        app.listen(format!("pty-exit-{id}"), move |event| {
+            let code: Option<u32> = serde_json::from_str(event.payload()).unwrap();
+            tx.send(code).unwrap();
+        });
+        manager
+            .spawn(
+                app.app_handle().clone(),
+                id.clone(),
+                "cmd.exe".into(),
+                vec![
+                    "/D".into(),
+                    "/Q".into(),
+                    "/C".into(),
+                    "echo VELA_FAST_EXIT".into(),
+                ],
+                std::env::current_dir()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned(),
+                80,
+                24,
+            )
+            .unwrap();
+        let session = manager.session(&id).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while session.master.lock().unwrap().is_some() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        assert!(
+            session.master.lock().unwrap().is_none(),
+            "Child must exit before opening the gate"
+        );
+        assert!(rx.try_recv().is_err());
+        manager.start_output(&id).unwrap();
+        let result = rx.recv_timeout(Duration::from_secs(15));
+        if result.is_err() {
+            let _ = manager.kill(&id);
+        }
+        assert_eq!(result.unwrap(), Some(0));
+        assert!(rx.try_recv().is_err());
+        assert!(
+            errors.lock().unwrap().is_empty(),
+            "{:?}",
+            errors.lock().unwrap()
+        );
+        assert!(String::from_utf8_lossy(&collected.lock().unwrap()).contains("VELA_FAST_EXIT"));
+        assert!(manager.session(&id).is_err());
+    }
+
+    #[cfg(windows)]
+    fn assert_escape_reaches_application(shell: &str, args: Vec<String>) {
+        use tauri::{Listener, Manager};
+        let app = tauri::test::mock_app();
+        let manager = PtyManager::new();
+        let id = format!("escape-{}", uuid::Uuid::new_v4());
+        let collected = Arc::new(Mutex::new(Vec::new()));
+        let sink = collected.clone();
+        let ack = manager.clone();
+        let ack_id = id.clone();
+        app.listen(format!("pty-output-{id}"), move |event| {
+            let bytes: Vec<u8> = serde_json::from_str(event.payload()).unwrap();
+            sink.lock().unwrap().extend(&bytes);
+            ack.acknowledge(&ack_id, bytes.len()).unwrap();
+        });
+        let (tx, rx) = mpsc::channel();
+        app.listen(format!("pty-exit-{id}"), move |_| {
+            let _ = tx.send(());
+        });
+        manager
+            .spawn(
+                app.app_handle().clone(),
+                id.clone(),
+                shell.into(),
+                args,
+                std::env::current_dir()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned(),
+                80,
+                24,
+            )
+            .unwrap();
+        manager.start_output(&id).unwrap();
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(20) {
+            if String::from_utf8_lossy(&collected.lock().unwrap()).contains("VELA_KEY_READY") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        manager
+            .write(&id, b"\x1b[27;1;27;1;0;1_\x1b[27;1;27;0;0;1_")
+            .unwrap();
+        let exited = rx.recv_timeout(Duration::from_secs(15));
+        if exited.is_err() {
+            let _ = manager.kill(&id);
+        }
+        let text = String::from_utf8_lossy(&collected.lock().unwrap()).into_owned();
+        assert!(
+            exited.is_ok() && text.contains("VELA_ESCAPE_OK"),
+            "{text:?}"
+        );
+        if shell == "powershell.exe" {
+            assert!(text.contains("\x1b]7;file:///C:/"), "{text:?}");
+            assert!(!text.contains("file:///C://"), "{text:?}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn conpty_escape_powershell_and_agent_root_prompt() {
+        let _guard = CONPTY_TEST
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        assert_escape_reaches_application("powershell.exe", vec![
+            "-NoLogo".into(), "-NoProfile".into(), "-Command".into(),
+            "Set-Location C:\\; $null = prompt; [Console]::WriteLine('VELA_KEY_READY'); $k = [Console]::ReadKey($true); if ($k.Key -eq [ConsoleKey]::Escape) { [Console]::WriteLine('VELA_ESCAPE_OK') }".into(),
+        ]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn conpty_escape_git_bash() {
+        let _guard = CONPTY_TEST
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let Some(shell) = [
+            r"C:\Program Files\Git\bin\bash.exe",
+            r"C:\Program Files (x86)\Git\bin\bash.exe",
+        ]
+        .into_iter()
+        .find(|path| std::path::Path::new(path).exists()) else {
+            return;
+        };
+        assert_escape_reaches_application(shell, vec![
+            "--noprofile".into(), "--norc".into(), "-c".into(),
+            "printf 'VELA_KEY_READY\\n'; IFS= read -r -s -n 1 key; if [[ \"$key\" == $'\\033' ]]; then printf '\\nVELA_ESCAPE_OK\\n'; fi".into(),
+        ]);
+    }
+
     #[test]
     fn credits_are_bounded_and_acknowledged() {
         let flow = OutputFlow::default();
@@ -587,6 +787,9 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn native_conpty_streams_input_output_and_natural_exit() {
+        let _guard = CONPTY_TEST
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         use tauri::{Listener, Manager};
         let app = tauri::test::mock_app();
         let manager = PtyManager::new();
@@ -639,6 +842,9 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn shutdown_cleans_a_terminal_even_before_reader_gate_opens() {
+        let _guard = CONPTY_TEST
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         use tauri::Manager;
         let app = tauri::test::mock_app();
         let manager = PtyManager::new();
@@ -744,6 +950,9 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn conpty_shift_enter_powershell() {
+        let _guard = CONPTY_TEST
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         // The Shift+Enter key record XTermView sends.
         assert_powershell_adds_line(b"\x1b[13;28;10;1;16;1_\x1b[13;28;10;0;16;1_");
         // Ctrl+J: xterm sends '\n', which ConPTY reports to PSReadLine as Ctrl+Enter.

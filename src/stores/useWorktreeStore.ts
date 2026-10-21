@@ -9,6 +9,7 @@ export function normalizePath(path: string): string {
     .replace(/\\/g, '/')
     .replace(/^\/([a-z])\//i, (_, drive: string) => `${drive.toUpperCase()}:/`);
   if (result.length > 3) result = result.replace(/\/+$/, '');
+  if (/^[a-z]:$/i.test(result)) result += '/';
   return result.toLowerCase();
 }
 
@@ -37,7 +38,7 @@ interface WorktreeState {
 
 let syncSequence = 0;
 let refreshSequence = 0;
-let pendingRefresh: { repo: string; promise: Promise<void> } | null = null;
+let pendingRefresh: { repo: string; checkStatus: boolean; promise: Promise<void> } | null = null;
 
 // Remembers repository detection and worktree listings per directory so switching tabs
 // back to a visited directory applies the panel instantly: no spinner, no Git IPC.
@@ -136,18 +137,18 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
     const previous = get();
     const normCwd = normalizePath(cwd);
 
-    // Fast path: if the cwd is already within the active repository/worktrees, do not flash or reload!
+    // Only exact known roots are safe without detection: subdirectories may be nested repositories.
     if (previous.repoPath && previous.worktrees.length > 0) {
       const matched = [...previous.worktrees]
         .sort((a, b) => b.path.length - a.path.length)
         .find((worktree) => {
           const path = normalizePath(worktree.path);
-          return normCwd === path || normCwd.startsWith(`${path}/`);
+          return normCwd === path;
         });
       if (matched) {
         // Clearing isLoading matters when this fast path supersedes an in-flight slow repo sync:
         // the stale sync bails on its sequence guard and would otherwise leave the spinner stuck.
-        set({ activeSessionCwd: cwd, activeWorktreeId: matched.id, isLoading: false });
+        set({ activeSessionCwd: cwd, activeWorktreeId: matched.id, isLoading: false, error: null });
         if (previous.autoGitStatus) {
           void get().refreshWorktrees(true);
         }
@@ -157,19 +158,42 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
 
     // Cached results let the panel swap instantly; with autoGitStatus OFF the sync
     // never flashes the spinner, it just resolves quietly.
+    if (previous.repoPath && previous.worktrees.length) {
+      cacheWorktreeList(previous.repoPath, previous.worktrees);
+      if (repoRootCache.size > 64) repoRootCache.clear();
+      for (const worktree of previous.worktrees) {
+        repoRootCache.set(normalizePath(worktree.path), previous.repoPath);
+      }
+    }
     const knownRoot = repoRootCache.get(normCwd);
     const knownList = knownRoot ? worktreeListCache.get(normalizePath(knownRoot)) : undefined;
-    const instant =
-      !!knownRoot &&
-      (previous.worktrees.some((worktree) => normalizePath(worktree.path) === normalizePath(knownRoot)) || !!knownList);
-    set({ activeSessionCwd: cwd, isLoading: !instant && get().autoGitStatus, error: null });
+    const instant = !!knownRoot && !!knownList;
+    set({
+      activeSessionCwd: cwd,
+      isLoading: !instant && get().autoGitStatus,
+      error: null,
+      ...(instant
+        ? {
+            repoPath: knownRoot,
+            worktrees: knownList,
+            activeWorktreeId:
+              [...knownList]
+                .sort((a, b) => b.path.length - a.path.length)
+                .find(
+                  (item) => normCwd === normalizePath(item.path) || normCwd.startsWith(`${normalizePath(item.path)}/`)
+                )?.id ??
+              knownList[0]?.id ??
+              null,
+          }
+        : { repoPath: null, worktrees: [], activeWorktreeId: null }),
+    });
     try {
       const root = knownRoot ?? (await tauriIpc.findGitRepo(cwd));
+      if (request !== syncSequence) return;
       if (root) {
         if (repoRootCache.size > 64) repoRootCache.clear();
         repoRootCache.set(normCwd, root);
       }
-      if (request !== syncSequence) return;
       if (!root) {
         set({ repoPath: null, worktrees: [], activeWorktreeId: null, isLoading: false });
         return;
@@ -179,6 +203,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
       let fetched = false;
       if (!list) {
         list = await tauriIpc.listWorktrees(root, get().autoGitStatus);
+        if (request !== syncSequence) return;
         cacheWorktreeList(root, list);
         fetched = true;
       }
@@ -188,7 +213,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
         .sort((a, b) => b.path.length - a.path.length)
         .find((worktree) => {
           const path = normalizePath(worktree.path);
-          return normCwd === path || normCwd.startsWith(`${path}/`);
+          return normCwd === path || normCwd.startsWith(path.endsWith('/') ? path : `${path}/`);
         });
       set({
         repoPath: sameRepo ? previous.repoPath || root : root,
@@ -202,9 +227,12 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
       }
     } catch (error) {
       // Detection or listing failed: forget the cached root so the next switch re-checks Git.
-      repoRootCache.delete(normCwd);
       if (request === syncSequence) {
+        repoRootCache.delete(normCwd);
         set({
+          repoPath: null,
+          worktrees: [],
+          activeWorktreeId: null,
           isLoading: false,
           error: errorMessage(
             error,
@@ -218,10 +246,18 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
   refreshWorktrees: async (background = false, forceStatus = false) => {
     const { repoPath, isMutating, autoGitStatus } = get();
     if (!repoPath || isMutating) return;
-    if (pendingRefresh?.repo === repoPath) return pendingRefresh.promise;
+    const shouldCheckStatus = forceStatus || autoGitStatus || !background;
+    if (pendingRefresh?.repo === repoPath) {
+      const pending = pendingRefresh;
+      await pending.promise;
+      if ((forceStatus || (shouldCheckStatus && !pending.checkStatus)) && get().repoPath === repoPath) {
+        if (pendingRefresh === pending) pendingRefresh = null;
+        return get().refreshWorktrees(background, true);
+      }
+      return;
+    }
     const request = ++refreshSequence;
     if (!background) set({ isLoading: true });
-    const shouldCheckStatus = forceStatus || autoGitStatus || !background;
     const operation = (async () => {
       try {
         const list = await tauriIpc.listWorktrees(repoPath, shouldCheckStatus);
@@ -246,7 +282,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
         }
       }
     })();
-    const record = { repo: repoPath, promise: operation };
+    const record = { repo: repoPath, checkStatus: shouldCheckStatus, promise: operation };
     pendingRefresh = record;
     try {
       await operation;

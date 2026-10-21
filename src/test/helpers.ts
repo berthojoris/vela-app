@@ -15,6 +15,7 @@ export const file = (path: string): FileDiff => ({
   additions: 1,
   deletions: 0,
   diff_content: '+change',
+  rollback_error: null,
 });
 export const session = (id: string): TerminalSession => ({
   id,
@@ -36,5 +37,6 @@ export const worktree = (id: string, path = `C:/${id}`): GitWorktree => ({
   branch: id,
   is_main: false,
   dirty_files_count: 0,
+  status_error: null,
   active_agent_name: null,
 });

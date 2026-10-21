@@ -311,7 +311,14 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
                           {wt.name}
                         </span>
 
-                        {wt.dirty_files_count > 0 ? (
+                        {wt.dirty_files_count === null ? (
+                          <span
+                            className={wt.status_error ? 'text-orca-amber' : 'text-orca-muted'}
+                            title={wt.status_error || 'Git status has not been checked. Click refresh to check.'}
+                          >
+                            {wt.status_error ? 'status unavailable' : 'not checked'}
+                          </span>
+                        ) : wt.dirty_files_count > 0 ? (
                           <span className="text-orca-amber bg-orca-amber/10 px-1 rounded font-medium">
                             {wt.dirty_files_count} dirty
                           </span>

@@ -1,5 +1,7 @@
 import { useEffect, useRef } from 'react';
 
+const dialogs: object[] = [];
+
 /** Trap focus, restore it on close, and keep Escape from leaking into the terminal. */
 export function useDialog(open: boolean, onClose: () => void, busy = false, restoreFocus: () => boolean = () => true) {
   const ref = useRef<HTMLDivElement>(null);
@@ -13,11 +15,20 @@ export function useDialog(open: boolean, onClose: () => void, busy = false, rest
   }, [onClose, busy, restoreFocus]);
   useEffect(() => {
     if (!open) return;
+    const token = {};
+    dialogs.push(token);
     const previous = document.activeElement as HTMLElement | null;
-    const frame = requestAnimationFrame(() =>
-      ref.current?.querySelector<HTMLElement>('input:not(:disabled), button:not(:disabled), [tabindex="0"]')?.focus()
-    );
+    const frame = requestAnimationFrame(() => {
+      if (dialogs[dialogs.length - 1] !== token) return;
+      const root = ref.current;
+      const target =
+        root?.querySelector<HTMLElement>('[data-autofocus]:not(:disabled)') ??
+        root?.querySelector<HTMLElement>('input:not(:disabled), textarea:not(:disabled), select:not(:disabled)') ??
+        root?.querySelector<HTMLElement>('button:not(:disabled), [tabindex="0"]');
+      (target ?? root)?.focus();
+    });
     const handleKey = (event: KeyboardEvent) => {
+      if (dialogs[dialogs.length - 1] !== token) return;
       if (event.key === 'Escape') {
         event.preventDefault();
         event.stopImmediatePropagation();
@@ -52,6 +63,8 @@ export function useDialog(open: boolean, onClose: () => void, busy = false, rest
     return () => {
       cancelAnimationFrame(frame);
       window.removeEventListener('keydown', handleKey, true);
+      const index = dialogs.indexOf(token);
+      if (index !== -1) dialogs.splice(index, 1);
       if (previous?.isConnected && restoreRef.current()) previous.focus();
     };
   }, [open]);

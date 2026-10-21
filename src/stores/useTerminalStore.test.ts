@@ -17,6 +17,13 @@ beforeEach(() => {
 });
 
 describe('stable terminal panes', () => {
+  it('does not reorder panes when selecting the current split mode again', () => {
+    store.getState().setSplitMode('vertical');
+    store.getState().setActiveSession('two');
+    store.getState().setSplitMode('vertical');
+    expect(store.getState().primarySessionId).toBe('one');
+    expect(store.getState().secondarySessionId).toBe('two');
+  });
   it('focuses the second pane without swapping or hiding either pane', () => {
     store.getState().setSplitMode('vertical');
     store.getState().setActiveSession('two');

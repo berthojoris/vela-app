@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useDiffStore } from '../../stores/useDiffStore';
-import { useWorktreeStore } from '../../stores/useWorktreeStore';
 import { useDialog } from '../../lib/useDialog';
+import { changeKey } from '../../lib/gitStatus';
 import { FileDiff } from '../../types';
 import {
   X,
@@ -51,6 +51,8 @@ export const DiffViewerModal: React.FC = () => {
   const [confirmResetAll, setConfirmResetAll] = useState(false);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const dialogRef = useDialog(isOpen, closeDiffModal, isCommitting || isRollingBack);
+  const rollbackDialogRef = useDialog(isOpen && !!fileToRollback, () => setFileToRollback(null), isRollingBack);
+  const resetDialogRef = useDialog(isOpen && confirmResetAll, () => setConfirmResetAll(false), isRollingBack);
   useEffect(() => () => clearTimeout(copyTimer.current), []);
 
   // Reset search and confirmation modals when modal opens/closes
@@ -62,20 +64,6 @@ export const DiffViewerModal: React.FC = () => {
       setConfirmResetAll(false);
     }
   }, [isOpen]);
-
-  // Intercept Escape key when a confirmation dialog is active
-  useEffect(() => {
-    if (!fileToRollback && !confirmResetAll) return;
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        setFileToRollback(null);
-        setConfirmResetAll(false);
-      }
-    };
-    window.addEventListener('keydown', onKeyDown, true);
-    return () => window.removeEventListener('keydown', onKeyDown, true);
-  }, [fileToRollback, confirmResetAll]);
 
   // Filter diffs based on search query
   const filteredDiffs = useMemo(() => {
@@ -120,10 +108,13 @@ export const DiffViewerModal: React.FC = () => {
 
   const getStatusBadge = (status: string) => {
     const s = status.trim();
-    if (s.includes('M')) return { text: 'MOD', color: 'text-orca-amber border-orca-amber/30 bg-orca-amber/10' };
-    if (s.includes('A')) return { text: 'ADD', color: 'text-orca-emerald border-orca-emerald/30 bg-orca-emerald/10' };
+    if (s.includes('U') || s === 'AA' || s === 'DD')
+      return { text: 'CON', color: 'text-orca-rose border-orca-rose/30 bg-orca-rose/10' };
     if (s.includes('D')) return { text: 'DEL', color: 'text-orca-rose border-orca-rose/30 bg-orca-rose/10' };
     if (s.includes('R')) return { text: 'REN', color: 'text-sky-400 border-sky-400/30 bg-sky-400/10' };
+    if (s.includes('C')) return { text: 'COPY', color: 'text-sky-400 border-sky-400/30 bg-sky-400/10' };
+    if (s.includes('A')) return { text: 'ADD', color: 'text-orca-emerald border-orca-emerald/30 bg-orca-emerald/10' };
+    if (s.includes('M')) return { text: 'MOD', color: 'text-orca-amber border-orca-amber/30 bg-orca-amber/10' };
     if (s.includes('?')) return { text: 'UNT', color: 'text-purple-400 border-purple-400/30 bg-purple-400/10' };
     return { text: s || 'MOD', color: 'text-orca-muted border-orca-border bg-orca-card' };
   };
@@ -148,7 +139,9 @@ export const DiffViewerModal: React.FC = () => {
         <div className="h-11 px-4 border-b border-orca-border flex items-center justify-between bg-orca-card/60">
           <div className="flex items-center gap-2.5 min-w-0">
             <FileCode2 className="w-4 h-4 text-orca-accent shrink-0" />
-            <h3 className="font-semibold text-white text-sm shrink-0">Visual Diff & Review</h3>
+            <h3 data-autofocus tabIndex={-1} className="font-semibold text-white text-sm shrink-0">
+              Visual Diff & Review
+            </h3>
 
             {worktreeName && (
               <div className="flex items-center gap-1.5 px-2 py-0.5 rounded border border-orca-border bg-orca-darkest/70 text-orca-muted text-[11px] truncate max-w-xs font-mono">
@@ -362,7 +355,7 @@ export const DiffViewerModal: React.FC = () => {
                 {/* File List Items */}
                 <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5">
                   {filteredDiffs.map((file) => {
-                    const isSelected = selectedFile?.path === file.path;
+                    const isSelected = !!selectedFile && changeKey(selectedFile) === changeKey(file);
                     const badge = getStatusBadge(file.status);
                     const pathParts = file.path.split('/');
                     const fileName = pathParts.pop();
@@ -370,7 +363,7 @@ export const DiffViewerModal: React.FC = () => {
 
                     return (
                       <div
-                        key={file.path}
+                        key={changeKey(file)}
                         onClick={() => selectFile(file)}
                         className={`group px-2 py-1.5 rounded flex items-center justify-between cursor-pointer transition-colors ${
                           isSelected
@@ -400,9 +393,9 @@ export const DiffViewerModal: React.FC = () => {
                               e.stopPropagation();
                               setFileToRollback(file);
                             }}
-                            disabled={isLoading || isCommitting || isRollingBack}
+                            disabled={isLoading || isCommitting || isRollingBack || !!file.rollback_error}
                             className="w-5 h-5 rounded flex items-center justify-center text-orca-muted hover:text-orca-rose hover:bg-orca-rose/20 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-all border border-transparent hover:border-orca-rose/30 disabled:opacity-30"
-                            title={`Rollback changes in ${fileName}`}
+                            title={file.rollback_error || `Rollback changes in ${fileName}`}
                           >
                             {isRollingBack && rollingBackFile === file.path ? (
                               <Loader2 className="w-3 h-3 animate-spin text-orca-rose" />
@@ -458,9 +451,9 @@ export const DiffViewerModal: React.FC = () => {
                         <button
                           type="button"
                           onClick={() => setFileToRollback(selectedFile)}
-                          disabled={isLoading || isCommitting || isRollingBack}
+                          disabled={isLoading || isCommitting || isRollingBack || !!selectedFile.rollback_error}
                           className="h-5 px-1.5 rounded text-orca-rose/90 hover:text-orca-rose hover:bg-orca-rose/15 flex items-center gap-1 transition-colors border border-orca-rose/30 hover:border-orca-rose/50 disabled:opacity-40 ml-1 text-[10px] font-sans font-medium"
-                          title={`Rollback changes in ${selectedFile.path}`}
+                          title={selectedFile.rollback_error || `Rollback changes in ${selectedFile.path}`}
                         >
                           {isRollingBack && rollingBackFile === selectedFile.path ? (
                             <Loader2 className="w-2.5 h-2.5 animate-spin" />
@@ -482,7 +475,12 @@ export const DiffViewerModal: React.FC = () => {
                     </div>
 
                     {/* Diff Code Viewer */}
-                    <div className="flex-1 overflow-auto p-3 font-mono text-[12px] leading-relaxed">
+                    <div className="flex-1 overflow-auto p-3 font-mono text-[12px] leading-relaxed select-text">
+                      {selectedFile.rollback_error && (
+                        <p role="status" className="mb-2 text-orca-amber">
+                          {selectedFile.rollback_error}
+                        </p>
+                      )}
                       {isDiffTruncated && (
                         <div className="mb-2 p-2 bg-orca-amber/10 border border-orca-amber/30 rounded text-amber-300 text-[11px]">
                           Note: This diff is large ({diffLines.length} lines). Displaying the first {MAX_DIFF_LINES}{' '}
@@ -593,6 +591,8 @@ export const DiffViewerModal: React.FC = () => {
         {fileToRollback && (
           <div className="fixed inset-0 z-[60] bg-black/80 flex items-center justify-center p-4">
             <div
+              ref={rollbackDialogRef}
+              tabIndex={-1}
               role="alertdialog"
               aria-modal="true"
               aria-labelledby="rollback-file-title"
@@ -618,6 +618,7 @@ export const DiffViewerModal: React.FC = () => {
               </p>
               <div className="flex justify-end gap-2 pt-2">
                 <button
+                  data-autofocus
                   type="button"
                   disabled={isRollingBack}
                   onClick={() => setFileToRollback(null)}
@@ -633,7 +634,6 @@ export const DiffViewerModal: React.FC = () => {
                     try {
                       await rollbackFile(target);
                       setFileToRollback(null);
-                      void useWorktreeStore.getState().refreshWorktrees(true, true);
                     } catch {
                       // Error is captured in store and displayed in banner
                     }
@@ -661,6 +661,8 @@ export const DiffViewerModal: React.FC = () => {
         {confirmResetAll && (
           <div className="fixed inset-0 z-[60] bg-black/80 flex items-center justify-center p-4">
             <div
+              ref={resetDialogRef}
+              tabIndex={-1}
               role="alertdialog"
               aria-modal="true"
               aria-labelledby="reset-all-title"
@@ -681,6 +683,7 @@ export const DiffViewerModal: React.FC = () => {
               </p>
               <div className="flex justify-end gap-2 pt-2">
                 <button
+                  data-autofocus
                   type="button"
                   disabled={isRollingBack}
                   onClick={() => setConfirmResetAll(false)}
@@ -695,7 +698,6 @@ export const DiffViewerModal: React.FC = () => {
                     try {
                       await resetAll();
                       setConfirmResetAll(false);
-                      void useWorktreeStore.getState().refreshWorktrees(true, true);
                     } catch {
                       // Error is captured in store and displayed in banner
                     }

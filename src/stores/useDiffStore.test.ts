@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { deferred, file } from '../test/helpers';
+import { deferred, file, worktree } from '../test/helpers';
 import { FileDiff } from '../types';
 
 const ipc = vi.hoisted(() => ({
@@ -7,9 +7,12 @@ const ipc = vi.hoisted(() => ({
   commitWorktree: vi.fn(),
   rollbackWorktreeFile: vi.fn(),
   resetWorktree: vi.fn(),
+  listWorktrees: vi.fn(),
 }));
 vi.mock('../lib/tauriIpc', () => ({ tauriIpc: ipc }));
 import { useDiffStore as store } from './useDiffStore';
+import { useWorktreeStore } from './useWorktreeStore';
+import { cacheChanges, getCachedChanges } from '../lib/worktreeChangesCache';
 
 beforeEach(() => {
   store.setState(store.getInitialState());
@@ -18,6 +21,8 @@ beforeEach(() => {
   ipc.commitWorktree.mockReset();
   ipc.rollbackWorktreeFile.mockReset();
   ipc.resetWorktree.mockReset();
+  ipc.listWorktrees.mockReset();
+  useWorktreeStore.setState(useWorktreeStore.getInitialState());
 });
 
 describe('diff target isolation', () => {
@@ -91,6 +96,51 @@ describe('commit lifecycle', () => {
     expect(store.getState().isCommitting).toBe(false);
     expect(store.getState().commitMessage).toBe('fix: reviewed change');
   });
+  it('refreshes worktree status after commit even with auto-check OFF', async () => {
+    useWorktreeStore.setState({
+      repoPath: 'C:/A',
+      worktrees: [{ ...worktree('A'), dirty_files_count: 1 }],
+      autoGitStatus: false,
+    });
+    const before = useWorktreeStore.getState().statusRevision;
+    ipc.commitWorktree.mockResolvedValue('Created abc');
+    ipc.listWorktrees.mockResolvedValue([worktree('A')]);
+    await store.getState().commit();
+    expect(ipc.listWorktrees).toHaveBeenCalledWith('C:/A', true);
+    expect(useWorktreeStore.getState().statusRevision).toBe(before + 1);
+    expect(useWorktreeStore.getState().worktrees[0].dirty_files_count).toBe(0);
+  });
+  it('does not report a successful commit as failed if sidebar refresh fails', async () => {
+    useWorktreeStore.setState({ repoPath: 'C:/A', worktrees: [worktree('A')] });
+    ipc.commitWorktree.mockResolvedValue('Created abc');
+    ipc.listWorktrees.mockRejectedValue('status unavailable');
+    await expect(store.getState().commit()).resolves.toBe('Created abc');
+    expect(store.getState().commitError).toBeNull();
+    expect(useWorktreeStore.getState().error).toContain('status unavailable');
+  });
+  it('invalidates the committed target cache even if the active repository changed', async () => {
+    cacheChanges('C:/A', { total: 1, files: [file('A.ts')] });
+    useWorktreeStore.setState({ repoPath: 'C:/B', worktrees: [worktree('B')] });
+    ipc.commitWorktree.mockResolvedValue('Created abc');
+    await store.getState().commit();
+    expect(getCachedChanges('C:/A')).toBeUndefined();
+    expect(ipc.listWorktrees).not.toHaveBeenCalled();
+  });
+});
+
+it('selects duplicate paths by status and preserves that identity after refresh', async () => {
+  const entries = [
+    { ...file('a.txt'), status: 'D' },
+    { ...file('a.txt'), status: '??' },
+  ];
+  ipc.getWorktreeDiff.mockResolvedValue(entries);
+  await store.getState().openDiffModal('C:/A');
+  store.getState().selectFile(entries[1]);
+  expect(store.getState().selectedFile?.status).toBe('??');
+  await store.getState().refreshDiffs();
+  expect(store.getState().selectedFile?.status).toBe('??');
+  await expect(store.getState().rollbackFile('a.txt')).rejects.toThrow('ambiguous');
+  expect(ipc.rollbackWorktreeFile).not.toHaveBeenCalled();
 });
 
 describe('rollback and reset lifecycle', () => {

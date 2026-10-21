@@ -22,6 +22,10 @@ beforeEach(() => {
   ipc.createWorktree.mockReset();
   ipc.listWorktrees.mockResolvedValue([worktree('task')]);
 });
+it('initially focuses the branch input, not the Close button', async () => {
+  render(<CreateWorktreeModal isOpen onClose={() => {}} />);
+  await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('Branch name')));
+});
 it('retries terminal launch without recreating an already created worktree', async () => {
   const close = vi.fn();
   ipc.createWorktree.mockResolvedValue(worktree('task'));

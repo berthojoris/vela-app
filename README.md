@@ -70,6 +70,7 @@ The Windows CI workflow runs frontend lint/format checks/tests/build, Rust fmt/c
 - Commit includes every tracked and unignored untracked change via `git add -A`. There is no file selection or automatic push.
 - Failed commits may leave changes staged. Timed-out write operations must be checked with `git status` / `git log` before retrying. Vela never automatically retries a Git write.
 - The diff modal keeps its target fixed during a commit. A refresh failure after a successful commit is reported separately.
+- Per-file rollback restores both sides of a detected rename. Paths with multiple Git status entries cannot be rolled back individually; resolve them in the terminal or explicitly review Reset All. Git status failures are shown as unavailable, never as clean.
 - Worktree removal requires confirmation, refuses active terminal directories in the UI, and lets Git protect dirty worktrees. The main worktree cannot be removed.
 - App close is blocked while an in-process Git write is running. On exit, Vela terminates its terminal process trees; it does not terminate external terminals.
 - A failed terminal can be closed without losing the rest of the workspace. Session restoration across app restarts is not implemented.
@@ -89,7 +90,7 @@ RAM, cold-start, and FPS numbers in earlier PRDs are **targets, not verified ben
 
 ## Directory tracking
 
-PowerShell, CMD, and standard Git Bash profiles report prompt directories through OSC 7; the active repository follows supported directory changes. PowerShell preserves the original prompt. Custom prompt scripts can override shell integration. Unmapped Linux paths from WSL/custom shells cannot be interpreted as Windows Git paths; those sessions retain their launch context until a compatible directory report is available.
+PowerShell, CMD, and standard Git Bash profiles report prompt directories through OSC 7; the active repository follows supported directory changes. PowerShell preserves the original prompt, and PowerShell-hosted agent presets install the same integration before launching the agent. Custom prompt scripts can override shell integration; custom `-File`/encoded-command launches are not rewritten. Unmapped Linux paths from WSL/custom shells cannot be interpreted as Windows Git paths; those sessions retain their launch context until a compatible directory report is available.
 
 ## Shortcuts
 

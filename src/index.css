@@ -69,6 +69,11 @@
   background-color: #0c0c0e !important;
 }
 
+.xterm .xterm-scrollable-element > .scrollbar.vertical.invisible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 .xterm-screen {
   background-color: #0c0c0e !important;
 }

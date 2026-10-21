@@ -9,7 +9,7 @@ const ipc = vi.hoisted(() => ({
   removeWorktree: vi.fn(),
 }));
 vi.mock('../lib/tauriIpc', () => ({ tauriIpc: ipc }));
-import { useWorktreeStore as store } from './useWorktreeStore';
+import { normalizePath, useWorktreeStore as store } from './useWorktreeStore';
 
 beforeEach(async () => {
   store.setState(store.getInitialState());
@@ -243,4 +243,77 @@ it('advances statusRevision only for refreshes that actually check Git status', 
   await store.getState().refreshWorktrees(false, true);
   expect(ipc.listWorktrees).toHaveBeenLastCalledWith('C:/A', true);
   expect(store.getState().statusRevision).toBe(before + 1);
+});
+
+it('detects nested repositories instead of reusing the outer worktree by prefix', async () => {
+  store.setState({ repoPath: 'C:/outer', worktrees: [worktree('outer', 'C:/outer')] });
+  ipc.findGitRepo.mockResolvedValue('C:/outer/nested');
+  ipc.listWorktrees.mockResolvedValue([worktree('nested', 'C:/outer/nested')]);
+  await store.getState().syncWithSession({ cwd: 'C:/outer/nested/src' });
+  expect(ipc.findGitRepo).toHaveBeenCalledWith('C:/outer/nested/src');
+  expect(store.getState().repoPath).toBe('C:/outer/nested');
+  expect(store.getState().activeWorktreeId).toBe('nested');
+});
+
+it('clears obsolete targets while detection is pending and after detection fails', async () => {
+  store.setState({ repoPath: 'C:/old', worktrees: [worktree('old')], activeWorktreeId: 'old' });
+  const pending = deferred<string | null>();
+  ipc.findGitRepo.mockReturnValue(pending.promise);
+  const request = store.getState().syncWithSession({ cwd: 'D:/inaccessible' });
+  expect(store.getState().repoPath).toBeNull();
+  expect(store.getState().worktrees).toEqual([]);
+  pending.reject('access denied');
+  await request;
+  expect(store.getState().activeWorktreeId).toBeNull();
+  expect(store.getState().error).toBe('access denied');
+});
+
+it('clears obsolete errors on exact-root fast-path selections', async () => {
+  store.setState({ repoPath: 'C:/A', worktrees: [worktree('A')], error: 'old error' });
+  await store.getState().syncWithSession({ cwd: 'C:/A' });
+  expect(store.getState().error).toBeNull();
+});
+
+it('does not let a late repository detection poison the directory cache', async () => {
+  const old = deferred<string | null>();
+  ipc.findGitRepo.mockReturnValueOnce(old.promise).mockResolvedValueOnce('C:/new');
+  ipc.listWorktrees.mockResolvedValue([worktree('new')]);
+  const pending = store.getState().syncWithSession({ cwd: 'C:/old-dir' });
+  await store.getState().syncWithSession({ cwd: 'C:/new' });
+  old.resolve('C:/stale');
+  await pending;
+  ipc.findGitRepo.mockResolvedValue(null);
+  await store.getState().syncWithSession({ cwd: 'C:/old-dir' });
+  expect(ipc.findGitRepo).toHaveBeenLastCalledWith('C:/old-dir');
+  expect(store.getState().repoPath).toBeNull();
+});
+
+it('upgrades a pending unchecked refresh when a forced status refresh arrives', async () => {
+  store.setState({ repoPath: 'C:/A', autoGitStatus: false });
+  const old = deferred<GitWorktree[]>();
+  ipc.listWorktrees.mockReturnValueOnce(old.promise).mockResolvedValueOnce([worktree('A')]);
+  const background = store.getState().refreshWorktrees(true);
+  const forced = store.getState().refreshWorktrees(true, true);
+  old.resolve([worktree('A')]);
+  await Promise.all([background, forced]);
+  expect(ipc.listWorktrees).toHaveBeenNthCalledWith(1, 'C:/A', false);
+  expect(ipc.listWorktrees).toHaveBeenNthCalledWith(2, 'C:/A', true);
+});
+
+it('forces a new post-mutation read instead of reusing an earlier status check', async () => {
+  store.setState({ repoPath: 'C:/A', autoGitStatus: true });
+  const old = deferred<GitWorktree[]>();
+  ipc.listWorktrees.mockReturnValueOnce(old.promise).mockResolvedValueOnce([worktree('A')]);
+  const background = store.getState().refreshWorktrees(true);
+  const afterCommit = store.getState().refreshWorktrees(true, true);
+  old.resolve([{ ...worktree('A'), dirty_files_count: 1 }]);
+  await Promise.all([background, afterCommit]);
+  expect(ipc.listWorktrees).toHaveBeenCalledTimes(2);
+  expect(store.getState().worktrees[0].dirty_files_count).toBe(0);
+});
+
+it('preserves drive roots and UNC share roots when normalizing', () => {
+  expect(normalizePath('C://')).toBe('c:/');
+  expect(normalizePath('C:')).toBe('c:/');
+  expect(normalizePath('\\\\server\\share\\')).toBe('//server/share');
 });

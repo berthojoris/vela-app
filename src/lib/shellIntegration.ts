@@ -21,7 +21,8 @@ export function cwdFromOsc7(data: string): string | null {
     if (!/^[a-z]:\//i.test(path) && !/^\/\/[^/]+\/[^/]+/.test(path)) return null;
     // eslint-disable-next-line no-control-regex
     if (/[\x00-\x1f\x7f]/.test(path)) return null;
-    return path.length > 3 ? path.replace(/\/+$/, '') : path;
+    const normalized = path.length > 3 ? path.replace(/\/+$/, '') : path;
+    return /^[a-z]:$/i.test(normalized) ? `${normalized}/` : normalized;
   } catch {
     return null;
   }

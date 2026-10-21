@@ -111,7 +111,10 @@ export const TitleBar: React.FC = () => {
   return (
     <header
       data-tauri-drag-region
-      onDoubleClick={handleToggleMaximize}
+      onDoubleClick={(event) => {
+        if (event.target instanceof Element && event.target.closest('button')) return;
+        void handleToggleMaximize();
+      }}
       className="h-10 shrink-0 bg-orca-darker border-b border-orca-border flex items-center justify-between px-3 select-none z-50 text-xs"
     >
       {/* Left: Branding & Active Project Info */}

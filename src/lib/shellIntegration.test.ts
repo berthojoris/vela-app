@@ -3,6 +3,9 @@ import { cwdFromOsc7, formatTabTitle, getFriendlyShellName } from './shellIntegr
 import { errorMessage } from './errors';
 
 it('decodes PowerShell, CMD, and MSYS prompt directory reports', () => {
+  expect(cwdFromOsc7('file:///C:/')).toBe('C:/');
+  expect(cwdFromOsc7('file:///C://')).toBe('C:/');
+  expect(cwdFromOsc7('file://server/share/')).toBe('//server/share');
   expect(cwdFromOsc7('file:///C:/Project%20Files/%E6%97%A5%E6%9C%AC/')).toBe('C:/Project Files/日本');
   expect(cwdFromOsc7('file:///C:\\Work\\new folder')).toBe('C:/Work/new folder');
   expect(cwdFromOsc7('file://DESKTOP/c/Projects/app')).toBe('C:/Projects/app');

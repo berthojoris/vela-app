@@ -11,6 +11,13 @@ const MAX_DIFF: usize = 8 * 1024 * 1024;
 const FILE_PREVIEW: usize = 32 * 1024;
 const TOTAL_PREVIEW: usize = 2 * 1024 * 1024;
 
+#[derive(Debug)]
+struct StatusEntry {
+    status: String,
+    path: String,
+    original_path: Option<String>,
+}
+
 static MUTATIONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 struct Mutation(String);
 impl Mutation {
@@ -53,7 +60,11 @@ impl GitManager {
         let mut command = hidden_command("git");
         command
             .env("GIT_TERMINAL_PROMPT", "0")
-            .env("GIT_PAGER", "cat");
+            .env("GIT_PAGER", "cat")
+            // Error classification must not depend on the user's installed translations.
+            .env("LC_ALL", "C")
+            .env("LANGUAGE", "C")
+            .env("GIT_LITERAL_PATHSPECS", "1");
         command.args([
             "--no-pager",
             "-c",
@@ -99,6 +110,9 @@ impl GitManager {
         }
         while path.len() > 3 && path.ends_with('/') {
             path.pop();
+        }
+        if path.len() == 2 && path.as_bytes()[0].is_ascii_alphabetic() && path.ends_with(':') {
+            path.push('/');
         }
         path
     }
@@ -153,10 +167,13 @@ impl GitManager {
         let mut worktrees = Vec::new();
         let mut current: Option<(String, String)> = None;
         let mut append = |path: String, branch: String| -> Result<(), String> {
-            let count = if check_status && Path::new(&path).is_dir() {
-                Self::status(&path)?.len()
+            let (count, status_error) = if check_status {
+                match Self::status(&path) {
+                    Ok(entries) => (Some(entries.len()), None),
+                    Err(error) => (None, Some(error)),
+                }
             } else {
-                0
+                (None, None)
             };
             worktrees.push(GitWorktree {
                 id: Self::generate_worktree_id(&path),
@@ -168,6 +185,7 @@ impl GitManager {
                 branch,
                 is_main: worktrees.is_empty(),
                 dirty_files_count: count,
+                status_error,
                 active_agent_name: None,
             });
             Ok(())
@@ -233,7 +251,11 @@ impl GitManager {
         let base_oid = String::from_utf8_lossy(&base_result.stdout)
             .trim()
             .to_string();
-        let repo = Path::new(&path);
+        let main = Self::list_worktrees(&path, false)?
+            .into_iter()
+            .find(|worktree| worktree.is_main)
+            .ok_or("Cannot determine the main worktree")?;
+        let repo = Path::new(&main.path);
         let parent = repo
             .parent()
             .ok_or("Cannot determine the repository parent directory")?;
@@ -292,7 +314,8 @@ impl GitManager {
             path: target,
             branch: branch.into(),
             is_main: false,
-            dirty_files_count: 0,
+            dirty_files_count: Some(0),
+            status_error: None,
             active_agent_name: None,
         })
     }
@@ -321,9 +344,9 @@ impl GitManager {
         Self::checked(output(&mut command, Duration::from_secs(120), 256 * 1024)?)?;
         Ok(())
     }
-    fn status(path: &str) -> Result<Vec<(String, String)>, String> {
+    fn status(path: &str) -> Result<Vec<StatusEntry>, String> {
         let result = Self::checked(Self::run(
-            Self::git_cmd().args([
+            Self::git_cmd().env("GIT_OPTIONAL_LOCKS", "0").args([
                 "-C",
                 path,
                 "status",
@@ -375,33 +398,68 @@ impl GitManager {
             .and_then(Self::checked)
             .map(|result| parse_numstat(&result.stdout))
             .unwrap_or_default();
+        let occurrences = path_occurrences(&entries);
+        let mut staged_counts = if occurrences.values().any(|count| *count > 1) {
+            Self::run(
+                Self::git_cmd().args([
+                    "-C",
+                    &path,
+                    "diff",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    "--numstat",
+                    "-z",
+                    "--cached",
+                    "--",
+                ]),
+                2 * 1024 * 1024,
+            )
+            .and_then(Self::checked)
+            .map(|result| parse_numstat(&result.stdout))
+            .unwrap_or_default()
+        } else {
+            HashMap::new()
+        };
         let files = entries
             .into_iter()
             .take(MAX_FILES)
-            .map(|(status, file)| {
-                let (additions, deletions) = counts.remove(&file).unwrap_or((0, 0));
-                ChangedFile {
-                    path: file,
-                    status,
-                    additions,
-                    deletions,
-                }
-            })
+            .map(
+                |StatusEntry {
+                     status, path: file, ..
+                 }| {
+                    let (additions, deletions) = if status == "??" {
+                        (0, 0)
+                    } else if occurrences.get(&file).is_some_and(|count| *count > 1) {
+                        staged_counts.remove(&file).unwrap_or((0, 0))
+                    } else {
+                        counts.remove(&file).unwrap_or((0, 0))
+                    };
+                    ChangedFile {
+                        path: file,
+                        status,
+                        additions,
+                        deletions,
+                    }
+                },
+            )
             .collect();
         Ok(WorktreeChanges { total, files })
     }
     pub fn get_worktree_diff(worktree_path: &str) -> Result<Vec<FileDiff>, String> {
         let path = Self::directory(worktree_path)?;
         let entries = Self::status(&path)?;
+        Self::diff_entries(&path, entries)
+    }
+    fn diff_entries(path: &str, entries: Vec<StatusEntry>) -> Result<Vec<FileDiff>, String> {
         if entries.len() > MAX_FILES {
             return Err(format!("{} changed files exceed the {MAX_FILES} file review limit. Use the terminal to narrow or review this change set.", entries.len()));
         }
         if entries.is_empty() {
             return Ok(Vec::new());
         }
-        let has_head = Self::has_head(&path)?;
+        let has_head = Self::has_head(path)?;
         let mut command = Self::git_cmd();
-        command.args(["-C", &path, "diff", "--no-ext-diff", "--no-textconv"]);
+        command.args(["-C", path, "diff", "--no-ext-diff", "--no-textconv"]);
         if has_head {
             command.arg("HEAD");
         } else {
@@ -414,12 +472,44 @@ impl GitManager {
             Ok(result) => (split_patch(&String::from_utf8_lossy(&result.stdout)), None),
             Err(error) => (HashMap::new(), Some(error)),
         };
+        let occurrences = path_occurrences(&entries);
+        // A staged deletion and an untracked replacement are separate changes, not a net diff.
+        let mut staged_patches = if occurrences.values().any(|count| *count > 1) {
+            Self::run(
+                Self::git_cmd().args([
+                    "-C",
+                    path,
+                    "diff",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    "--cached",
+                    "--",
+                ]),
+                MAX_DIFF,
+            )
+            .and_then(Self::checked)
+            .map(|result| split_patch(&String::from_utf8_lossy(&result.stdout)))
+            .unwrap_or_default()
+        } else {
+            HashMap::new()
+        };
         let mut budget = TOTAL_PREVIEW;
         let mut diffs = Vec::with_capacity(entries.len());
-        for (status, file) in entries {
+        for StatusEntry {
+            status, path: file, ..
+        } in entries
+        {
             let mut additions = 0;
             let mut deletions = 0;
-            let text = if let Some(patch) = patches.remove(&file) {
+            let duplicate = occurrences.get(&file).is_some_and(|count| *count > 1);
+            let patch = if status.contains('?') {
+                None
+            } else if duplicate {
+                staged_patches.remove(&file)
+            } else {
+                patches.remove(&file)
+            };
+            let text = if let Some(patch) = patch {
                 additions = patch
                     .lines()
                     .filter(|line| line.starts_with('+') && !line.starts_with("+++"))
@@ -430,33 +520,12 @@ impl GitManager {
                     .count();
                 patch
             } else if status.contains('?') || (!has_head && status.contains('A')) {
-                let full_path = Path::new(&path).join(&file);
-                let metadata = std::fs::symlink_metadata(&full_path)
-                    .map_err(|error| format!("Cannot inspect {file}: {error}"))?;
-                if metadata.file_type().is_symlink() {
-                    "Symbolic link. Inspect its target in the terminal.".into()
-                } else if metadata.len() > 1_000_000 || budget == 0 {
-                    "Preview omitted: file exceeds the review size limit. Inspect it in the terminal before committing.".into()
-                } else {
-                    // take() also bounds reads if another process grows the file after metadata().
-                    use std::io::Read;
-                    let mut bytes = Vec::new();
-                    std::fs::File::open(&full_path)
-                        .and_then(|file| file.take(1_000_001).read_to_end(&mut bytes))
-                        .map_err(|error| format!("Cannot read {file}: {error}"))?;
-                    if bytes.contains(&0) {
-                        "Binary file. No text preview available.".into()
-                    } else {
-                        let content = String::from_utf8_lossy(&bytes);
-                        additions = content.lines().count();
-                        let mut preview = String::new();
-                        for line in content.lines().take(2000) {
-                            preview.push('+');
-                            preview.push_str(line);
-                            preview.push('\n');
-                        }
+                match untracked_preview(&Path::new(&path).join(&file), budget) {
+                    Ok((preview, count)) => {
+                        additions = count;
                         preview
                     }
+                    Err(error) => format!("Preview unavailable for {file}: {error}. Refresh or inspect it in the terminal."),
                 }
             } else {
                 format!(
@@ -474,6 +543,7 @@ impl GitManager {
                 additions,
                 deletions,
                 diff_content: preview,
+                rollback_error: duplicate.then(|| "This path has multiple Git status entries. Resolve it in the terminal before rolling back.".into()),
             });
         }
         Ok(diffs)
@@ -497,25 +567,48 @@ impl GitManager {
     }
     pub fn rollback_file(worktree_path: &str, file_path: &str) -> Result<(), String> {
         let path = Self::directory(worktree_path)?;
-        let file = file_path.trim().replace('\\', "/");
-        if file.is_empty()
-            || file.starts_with('-')
-            || file.starts_with('/')
-            || file.contains("..")
-            || file.contains(':')
-            || file.chars().any(char::is_control)
-        {
-            return Err("Invalid file path for rollback".into());
-        }
+        let file = file_path.replace('\\', "/");
+        validate_rollback_path(&file)?;
         let _operation = Mutation::begin(&path)?;
-
-        let has_head = Self::run(
-            Self::git_cmd().args(["-C", &path, "rev-parse", "--verify", "HEAD"]),
-            64 * 1024,
-        )?
-        .status
-        .success();
-
+        let entries = Self::status(&path)?;
+        let matches: Vec<_> = entries.iter().filter(|entry| entry.path == file).collect();
+        if matches.len() != 1 {
+            return Err("This path has changed or has multiple Git status entries. Refresh and resolve it in the terminal before rolling back.".into());
+        }
+        let entry = matches[0];
+        let has_head = Self::has_head(&path)?;
+        if entry.status.contains('R') {
+            let source = entry
+                .original_path
+                .as_deref()
+                .ok_or("Rename source is unavailable")?;
+            validate_rollback_path(source)?;
+            if entries.iter().any(|other| {
+                other.path == source
+                    || (other.path != file && other.original_path.as_deref() == Some(source))
+            }) {
+                return Err(
+                    "The rename source has other changes. Resolve this rename in the terminal."
+                        .into(),
+                );
+            }
+            // Git restores the source and removes/restores the destination in one checked operation.
+            Self::checked(Self::run(
+                Self::git_cmd().args([
+                    "-C",
+                    &path,
+                    "restore",
+                    "--source=HEAD",
+                    "--staged",
+                    "--worktree",
+                    "--",
+                    source,
+                    &file,
+                ]),
+                64 * 1024,
+            )?)?;
+            return Ok(());
+        }
         let in_head = if has_head {
             Self::run(
                 Self::git_cmd().args(["-C", &path, "cat-file", "-e", &format!("HEAD:{file}")]),
@@ -528,32 +621,32 @@ impl GitManager {
         };
 
         if in_head {
-            let _ = Self::run(
-                Self::git_cmd().args(["-C", &path, "reset", "HEAD", "--", &file]),
+            Self::checked(Self::run(
+                Self::git_cmd().args([
+                    "-C",
+                    &path,
+                    "restore",
+                    "--source=HEAD",
+                    "--staged",
+                    "--worktree",
+                    "--",
+                    &file,
+                ]),
                 64 * 1024,
-            );
-            let mut cmd = Self::git_cmd();
-            cmd.args(["-C", &path, "checkout", "HEAD", "--", &file]);
-            Self::checked(Self::run(&mut cmd, 64 * 1024)?)?;
+            )?)?;
+        } else if entry.status == "??" {
+            Self::checked(Self::run(
+                Self::git_cmd().args(["-C", &path, "clean", "-f", "-d", "--", &file]),
+                64 * 1024,
+            )?)?;
+            if Path::new(&path).join(&file).exists() {
+                return Err("Git did not remove this path. Inspect it in the terminal.".into());
+            }
         } else {
-            let rm_res = Self::run(
+            Self::checked(Self::run(
                 Self::git_cmd().args(["-C", &path, "rm", "-f", "--", &file]),
                 64 * 1024,
-            );
-            if rm_res.as_ref().map(|o| !o.status.success()).unwrap_or(true) {
-                let _ = Self::run(
-                    Self::git_cmd().args(["-C", &path, "clean", "-f", "-d", "--", &file]),
-                    64 * 1024,
-                );
-            }
-            let target = Path::new(&path).join(&file);
-            if target.exists() {
-                if target.is_dir() {
-                    let _ = std::fs::remove_dir_all(&target);
-                } else {
-                    let _ = std::fs::remove_file(&target);
-                }
-            }
+            )?)?;
         }
         Ok(())
     }
@@ -589,7 +682,57 @@ impl GitManager {
     }
 }
 
-fn parse_status(bytes: &[u8]) -> Vec<(String, String)> {
+fn path_occurrences(entries: &[StatusEntry]) -> HashMap<String, usize> {
+    let mut counts = HashMap::new();
+    for entry in entries {
+        *counts.entry(entry.path.clone()).or_insert(0) += 1;
+    }
+    counts
+}
+
+fn validate_rollback_path(file: &str) -> Result<(), String> {
+    if file.is_empty()
+        || file.starts_with('-')
+        || file.starts_with('/')
+        || file.contains(':')
+        || file.split('/').any(|part| part == ".." || part == ".git")
+        || file.chars().any(char::is_control)
+    {
+        return Err("Invalid file path for rollback".into());
+    }
+    Ok(())
+}
+
+fn untracked_preview(full_path: &Path, budget: usize) -> Result<(String, usize), String> {
+    let metadata = std::fs::symlink_metadata(full_path).map_err(|error| error.to_string())?;
+    if metadata.file_type().is_symlink() {
+        return Ok((
+            "Symbolic link. Inspect its target in the terminal.".into(),
+            0,
+        ));
+    }
+    if !metadata.is_file() || metadata.len() > 1_000_000 || budget == 0 {
+        return Ok(("Preview omitted: not a regular file or review size limit reached. Inspect it in the terminal before committing.".into(), 0));
+    }
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    std::fs::File::open(full_path)
+        .and_then(|file| file.take(1_000_001).read_to_end(&mut bytes))
+        .map_err(|error| error.to_string())?;
+    if bytes.contains(&0) {
+        return Ok(("Binary file. No text preview available.".into(), 0));
+    }
+    let content = String::from_utf8_lossy(&bytes);
+    let count = content.lines().count();
+    let preview = content
+        .lines()
+        .take(2000)
+        .map(|line| format!("+{line}\n"))
+        .collect();
+    Ok((preview, count))
+}
+
+fn parse_status(bytes: &[u8]) -> Vec<StatusEntry> {
     let mut fields = bytes.split(|byte| *byte == 0);
     let mut entries = Vec::new();
     while let Some(field) = fields.next() {
@@ -598,10 +741,18 @@ fn parse_status(bytes: &[u8]) -> Vec<(String, String)> {
         }
         let status = String::from_utf8_lossy(&field[..2]).trim().to_string();
         let path = String::from_utf8_lossy(&field[3..]).into_owned();
-        if field[..2].contains(&b'R') || field[..2].contains(&b'C') {
-            fields.next();
-        }
-        entries.push((status, path));
+        let original_path = if field[..2].contains(&b'R') || field[..2].contains(&b'C') {
+            fields
+                .next()
+                .map(|source| String::from_utf8_lossy(source).into_owned())
+        } else {
+            None
+        };
+        entries.push(StatusEntry {
+            status,
+            path,
+            original_path,
+        });
     }
     entries
 }
@@ -726,6 +877,12 @@ mod tests {
             "C:/repo/worktree"
         );
         assert_eq!(GitManager::normalize_path("/é/repo"), "/é/repo");
+        assert_eq!(GitManager::normalize_path("C://"), "C:/");
+        assert_eq!(GitManager::normalize_path("C:"), "C:/");
+        assert_eq!(
+            GitManager::normalize_path(r"\\server\share\"),
+            "//server/share"
+        );
     }
     #[test]
     fn worktree_ids_are_stable_and_case_insensitive() {
@@ -739,8 +896,11 @@ mod tests {
         let entries =
             parse_status(b"R  new -> name.txt\0old.txt\0?? leading space.txt\0 M a\tb.txt\0");
         assert_eq!(entries.len(), 3);
-        assert_eq!(entries[0].1, "new -> name.txt");
-        assert_eq!(entries[2].1, "a\tb.txt");
+        assert_eq!(entries[0].path, "new -> name.txt");
+        assert_eq!(entries[0].original_path.as_deref(), Some("old.txt"));
+        assert_eq!(entries[2].path, "a\tb.txt");
+        let copies = parse_status(b"C  copy.txt\0source.txt\0");
+        assert_eq!(copies[0].original_path.as_deref(), Some("source.txt"));
     }
     #[test]
     fn numstat_counts_follow_rename_destination_and_skip_binary() {
@@ -807,6 +967,9 @@ mod tests {
         std::fs::write(scratch.0.join("repo/first.txt"), "original\n").unwrap();
         GitManager::commit_worktree(&path, "initial").unwrap();
         let worktree = GitManager::create_worktree(&path, "feat/test", None).unwrap();
+        let from_linked = GitManager::create_worktree(&worktree.path, "feat/second", None).unwrap();
+        assert!(from_linked.name.starts_with("repo-feat_second-"));
+        GitManager::remove_worktree(&path, &from_linked.path, false).unwrap();
         assert_eq!(GitManager::list_worktrees(&path, true).unwrap().len(), 2);
         std::fs::write(Path::new(&worktree.path).join("first.txt"), "updated\n").unwrap();
         std::fs::write(
@@ -849,7 +1012,7 @@ mod tests {
         assert_eq!(GitManager::list_worktrees(&path, false).unwrap().len(), 1);
         assert_eq!(
             GitManager::list_worktrees(&path, false).unwrap()[0].dirty_files_count,
-            0
+            None
         );
         assert!(GitManager::create_worktree(&path, "--invalid", None).is_err());
         assert!(GitManager::remove_worktree(&path, &path, false).is_err());
@@ -873,6 +1036,119 @@ mod tests {
             "original\n"
         );
         assert!(GitManager::get_worktree_diff(&path).unwrap().is_empty());
+
+        // Natural staged renames, with both staged and unstaged destination edits.
+        for variant in 0..3 {
+            run(&["mv", "first.txt", "renamed.txt"]);
+            if variant > 0 {
+                std::fs::write(scratch.0.join("repo/renamed.txt"), "original\nextra\n").unwrap();
+            }
+            if variant == 2 {
+                run(&["add", "renamed.txt"]);
+            }
+            GitManager::rollback_file(&path, "renamed.txt").unwrap();
+            assert_eq!(
+                std::fs::read_to_string(&file_tracked).unwrap(),
+                "original\n"
+            );
+            assert!(!scratch.0.join("repo/renamed.txt").exists());
+            assert!(GitManager::status(&path).unwrap().is_empty());
+        }
+        run(&["mv", "first.txt", "renamed.txt"]);
+        std::fs::write(&file_tracked, "independent local file\n").unwrap();
+        assert!(GitManager::rollback_file(&path, "renamed.txt").is_err());
+        assert_eq!(
+            std::fs::read_to_string(&file_tracked).unwrap(),
+            "independent local file\n"
+        );
+        GitManager::reset_worktree(&path).unwrap();
+
+        // Index deletion + untracked replacement must be distinct and non-destructive.
+        run(&["rm", "--cached", "first.txt"]);
+        std::fs::write(&file_tracked, "local replacement\n").unwrap();
+        let duplicate = GitManager::get_worktree_diff(&path).unwrap();
+        assert_eq!(duplicate.len(), 2);
+        assert!(duplicate.iter().all(|file| file.rollback_error.is_some()));
+        assert!(duplicate
+            .iter()
+            .find(|file| file.status == "D")
+            .unwrap()
+            .diff_content
+            .contains("-original"));
+        assert!(duplicate
+            .iter()
+            .find(|file| file.status == "??")
+            .unwrap()
+            .diff_content
+            .contains("+local replacement"));
+        assert!(GitManager::rollback_file(&path, "first.txt").is_err());
+        let summary = GitManager::get_worktree_changes(&path).unwrap();
+        let deletion = summary
+            .files
+            .iter()
+            .find(|file| file.status == "D")
+            .unwrap();
+        assert_eq!((deletion.additions, deletion.deletions), (0, 1));
+        assert_eq!(
+            std::fs::read_to_string(&file_tracked).unwrap(),
+            "local replacement\n"
+        );
+        GitManager::reset_worktree(&path).unwrap();
+
+        // A vanished untracked file cannot prevent review of remaining changes.
+        std::fs::write(&file_tracked, "still reviewable\n").unwrap();
+        let entries = parse_status(b" M first.txt\0?? vanished.txt\0");
+        let partial = GitManager::diff_entries(&path, entries).unwrap();
+        assert_eq!(partial.len(), 2);
+        assert!(partial
+            .iter()
+            .any(|file| file.diff_content.contains("+still reviewable")));
+        assert!(partial.iter().any(|file| file
+            .diff_content
+            .contains("Preview unavailable for vanished.txt")));
+        GitManager::rollback_file(&path, "first.txt").unwrap();
+
+        // Literal pathspecs must not roll back a sibling whose name matches a wildcard.
+        std::fs::write(scratch.0.join("repo/[a].txt"), "literal\n").unwrap();
+        std::fs::write(scratch.0.join("repo/a.txt"), "sibling\n").unwrap();
+        GitManager::rollback_file(&path, "[a].txt").unwrap();
+        assert!(scratch.0.join("repo/a.txt").exists());
+        GitManager::rollback_file(&path, "a.txt").unwrap();
+
+        // Status errors are isolated and unchecked worktrees are never marked clean.
+        let broken = GitManager::create_worktree(&path, "broken", None).unwrap();
+        let git_file = Path::new(&broken.path).join(".git");
+        std::fs::remove_file(&git_file).unwrap();
+        std::fs::write(&git_file, "gitdir: nonexistent-git-directory\n").unwrap();
+        let listing = GitManager::list_worktrees(&path, true).unwrap();
+        let unavailable = listing
+            .iter()
+            .find(|item| item.path == broken.path)
+            .unwrap();
+        assert_eq!(unavailable.dirty_files_count, None);
+        assert!(unavailable.status_error.is_some());
+        assert_eq!(
+            listing
+                .iter()
+                .find(|item| item.path == path)
+                .unwrap()
+                .dirty_files_count,
+            Some(0)
+        );
+        assert!(GitManager::find_repo_root(Some(&broken.path)).is_err());
+        let plain = scratch.0.join("plain");
+        std::fs::create_dir(&plain).unwrap();
+        assert!(GitManager::find_repo_root(Some(&plain.to_string_lossy()))
+            .unwrap()
+            .is_none());
+        let envs: HashMap<_, _> = GitManager::git_cmd()
+            .get_envs()
+            .map(|(key, value)| (key.to_owned(), value.map(|value| value.to_owned())))
+            .collect();
+        assert_eq!(
+            envs.get(std::ffi::OsStr::new("LC_ALL")),
+            Some(&Some("C".into()))
+        );
 
         // Test invalid paths
         assert!(GitManager::rollback_file(&path, "../escape").is_err());

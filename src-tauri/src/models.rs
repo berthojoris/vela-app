@@ -34,7 +34,8 @@ pub struct GitWorktree {
     pub path: String,
     pub branch: String,
     pub is_main: bool,
-    pub dirty_files_count: usize,
+    pub dirty_files_count: Option<usize>,
+    pub status_error: Option<String>,
     pub active_agent_name: Option<String>,
 }
 
@@ -45,6 +46,7 @@ pub struct FileDiff {
     pub additions: usize,
     pub deletions: usize,
     pub diff_content: String,
+    pub rollback_error: Option<String>,
 }
 
 /// Lightweight changed-file entry for the sidebar: status and line counts, no patch text.

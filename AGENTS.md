@@ -27,6 +27,17 @@ Rust regression/integration tests exercise temporary Git repos and real ConPTY o
 - Docs-only changes (e.g. `*.md`) don't need build checks.
 - **When a release *installer* is requested** (setup.exe / Windows installer / distributable release): follow the "Release installer (NSIS)" section — bump the version in all 5 files first, then build with `npx @tauri-apps/cli build --config src-tauri/tauri.bundle.json`. Do not reuse `--no-bundle` for that request, and do not enable `bundle.active` in `tauri.conf.json`.
 
+## Push-only requests — git only, nothing else
+
+When the prompt only asks to push ("push update to repo", "push update ke github", "push ke repo", "commit and push", or similar), the whole task is exactly: `git status` → `git add` → `git commit` → `git push`. This overrides the "Definition of done" above.
+
+- Do **not** run builds, tests, typecheck, lint, format, `cargo` checks, Tauri/release/installer builds, version bumps, dependency installs, or edit any file.
+- Read-only git inspection (`git diff --stat`, `git log -1 --oneline`, `git branch --show-current`, `git remote -v`) is allowed only to write an accurate commit message and target the push.
+- Do not stage secrets or build output (`.env*`, keys, `node_modules/`, `dist/`, `target/`, `*.exe`); skip them and say so.
+- Commit message describes the staged diff only, with no AI attribution. No `--amend`, `--no-verify`, `--allow-empty`.
+- If the push is rejected (behind remote, auth, protected branch), stop and report — never `--force`, `pull`, `rebase`, `reset`, or `stash`.
+- Checks run only if the same prompt explicitly asks for them. Claude Code agents use the `push-update-to-repo` skill, which has the full rules.
+
 ## Release installer (NSIS)
 
 Use this section whenever a prompt asks for a **release installer**, a **Windows installer**, a **setup.exe**, or a distributable **release build**. The flow is always: **bump version → run checks → build installer → user runs the installer in upgrade mode**.
@@ -46,6 +57,15 @@ The version is duplicated in **5 files**. A release installer build MUST bump al
 - If the user did not specify a version, bump the **patch** component of the current version unless the change is a feature (minor) or breaking (major). State the chosen version in your report.
 - Never bump only some of the 5. A mismatch between `tauri.conf.json` and `Cargo.toml` produces an installer whose filename disagrees with the built binary, and a mismatch with `package.json` breaks the published npm metadata.
 - Verify the bump landed everywhere before building: `grep`/read the 5 files and confirm the same string.
+
+### The UI version label follows the bump automatically
+
+The footer status bar (`src/components/layout/StatusBar.tsx`) shows `Vela Core v<version>` in the bottom-left corner of the app window. That label is **derived, never hardcoded**:
+
+- It starts from `version` imported out of `package.json` (so the 5-file bump above already updates it).
+- On mount it upgrades to the real running binary version from Tauri's `getVersion()` (`tauri.conf.json` → ProductVersion) when the Tauri IPC is available, falling back to the bundled value in browser/`vitest` mode.
+
+Do **not** write a literal version string (`v0.2.0`, `v0.1.0`, etc.) into `StatusBar.tsx`, and do not add a new hardcoded version literal anywhere in the UI. If you bump the release version, this label is covered by the same 5-file bump — just confirm it renders the new value (`npx vite`/`npm run dev` or the built app) rather than assuming it. When touching that label, keep the runtime `getVersion()` path and its `package.json` fallback (covered by `StatusBar.test.tsx`).
 
 ### Why the version bump is mandatory
 

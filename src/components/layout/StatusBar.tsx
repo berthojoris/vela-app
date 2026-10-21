@@ -1,11 +1,34 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useTerminalStore } from '../../stores/useTerminalStore';
 import { useWorktreeStore } from '../../stores/useWorktreeStore';
 import { Cpu, Columns2, Rows2, Terminal as TermIcon, ShieldCheck } from 'lucide-react';
+import { version as bundleVersion } from '../../../package.json';
+import { isTauri } from '../../lib/tauriIpc';
 
 export const StatusBar: React.FC = () => {
   const { sessions, splitMode } = useTerminalStore();
   const { activeWorktreeId, worktrees } = useWorktreeStore();
+  // Never hardcode this string: the bundled package.json version is the initial/fallback
+  // value, and the running binary's real version (tauri.conf.json -> ProductVersion)
+  // replaces it when the Tauri IPC is available.
+  const [appVersion, setAppVersion] = useState(bundleVersion);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { getVersion } = await import('@tauri-apps/api/app');
+        const runtimeVersion = await getVersion();
+        if (!cancelled && runtimeVersion) setAppVersion(runtimeVersion);
+      } catch {
+        // Keep the bundled version when the app metadata is unavailable.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const activeWorktree = worktrees.find((w) => w.id === activeWorktreeId);
   const activeAgents = sessions.filter((s) => s.is_agent && !s.exited).length;
@@ -17,15 +40,24 @@ export const StatusBar: React.FC = () => {
         <div className="flex items-center gap-1.5">
           <span className="w-2 h-2 rounded-full bg-orca-emerald animate-pulse" />
           <span className="text-orca-text font-sans font-medium">Vela Core</span>
-          <span className="text-[10px] text-orca-muted">v0.1.0</span>
+          <span className="text-[10px] text-orca-muted">v{appVersion}</span>
         </div>
 
         {activeWorktree && (
           <div className="flex items-center gap-1 border-l border-orca-border pl-3">
             <span className="text-orca-muted">Worktree:</span>
             <span className="text-orca-text font-semibold">{activeWorktree.branch}</span>
-            {activeWorktree.dirty_files_count > 0 && (
-              <span className="text-orca-amber ml-1">({activeWorktree.dirty_files_count} modified)</span>
+            {activeWorktree.dirty_files_count === null ? (
+              <span
+                className="text-orca-muted ml-1"
+                title={activeWorktree.status_error || 'Refresh to check Git status'}
+              >
+                ({activeWorktree.status_error ? 'status unavailable' : 'not checked'})
+              </span>
+            ) : (
+              activeWorktree.dirty_files_count > 0 && (
+                <span className="text-orca-amber ml-1">({activeWorktree.dirty_files_count} modified)</span>
+              )
             )}
           </div>
         )}

@@ -22,7 +22,8 @@ export interface GitWorktree {
   path: string;
   branch: string;
   is_main: boolean;
-  dirty_files_count: number;
+  dirty_files_count: number | null;
+  status_error: string | null;
   active_agent_name: string | null;
 }
 
@@ -32,6 +33,7 @@ export interface FileDiff {
   additions: number;
   deletions: number;
   diff_content: string;
+  rollback_error: string | null;
 }
 
 /** Lightweight changed-file entry for the sidebar: status and line counts, no patch text. */

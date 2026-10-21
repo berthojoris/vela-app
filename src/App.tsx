@@ -12,6 +12,7 @@ import { useNoticeStore } from './stores/useNoticeStore';
 import { tauriIpc } from './lib/tauriIpc';
 import { useTerminalStore } from './stores/useTerminalStore';
 import { useWorktreeStore } from './stores/useWorktreeStore';
+import { useDiffStore } from './stores/useDiffStore';
 
 export const App: React.FC = () => {
   const [isCreateWorktreeOpen, setIsCreateWorktreeOpen] = useState(false);
@@ -19,6 +20,8 @@ export const App: React.FC = () => {
   const [modalInitialProfileId, setModalInitialProfileId] = useState<string | undefined>(undefined);
   const { fetchProfiles, sessions, activeSessionId } = useTerminalStore();
   const { initRepo, syncWithSession, refreshWorktrees, autoGitStatus } = useWorktreeStore();
+  const isDiffOpen = useDiffStore((state) => state.isOpen);
+  const activeSessionCwd = sessions.find((session) => session.id === activeSessionId)?.cwd;
 
   const handleOpenTerminalModal = (profileId?: string) => {
     setModalInitialProfileId(profileId);
@@ -31,7 +34,7 @@ export const App: React.FC = () => {
 
     // 2. Ensure initial worktree panel is empty with no leftover history
     initRepo();
-  }, []);
+  }, [fetchProfiles, initRepo]);
 
   useEffect(() => {
     let disposed = false;
@@ -59,25 +62,24 @@ export const App: React.FC = () => {
 
   // Sync active worktree/repo whenever active terminal tab changes
   useEffect(() => {
-    const activeSession = sessions.find((s) => s.id === activeSessionId);
-    if (activeSession) {
-      syncWithSession(activeSession);
+    if (activeSessionCwd !== undefined) {
+      syncWithSession({ cwd: activeSessionCwd });
     } else if (sessions.length === 0) {
       syncWithSession(null);
     }
-  }, [activeSessionId, sessions.length, sessions.find((s) => s.id === activeSessionId)?.cwd]);
+  }, [activeSessionId, sessions.length, activeSessionCwd, syncWithSession]);
 
   // Auto-refresh worktrees periodically and on window focus (paused while modals are open or autoGitStatus is OFF)
   useEffect(() => {
     const handleFocus = () => {
-      if (!isOpenTerminalModalOpen && !isCreateWorktreeOpen && autoGitStatus) {
+      if (!isOpenTerminalModalOpen && !isCreateWorktreeOpen && !isDiffOpen && autoGitStatus) {
         refreshWorktrees(true);
       }
     };
     window.addEventListener('focus', handleFocus);
 
     const interval = setInterval(() => {
-      if (!document.hidden && !isOpenTerminalModalOpen && !isCreateWorktreeOpen && autoGitStatus) {
+      if (!document.hidden && !isOpenTerminalModalOpen && !isCreateWorktreeOpen && !isDiffOpen && autoGitStatus) {
         refreshWorktrees(true);
       }
     }, 10000);
@@ -86,7 +88,7 @@ export const App: React.FC = () => {
       window.removeEventListener('focus', handleFocus);
       clearInterval(interval);
     };
-  }, [isOpenTerminalModalOpen, isCreateWorktreeOpen, autoGitStatus]);
+  }, [isOpenTerminalModalOpen, isCreateWorktreeOpen, isDiffOpen, autoGitStatus, refreshWorktrees]);
 
   return (
     <div className="h-screen w-screen flex flex-col bg-orca-darkest text-orca-text overflow-hidden select-none font-sans relative">

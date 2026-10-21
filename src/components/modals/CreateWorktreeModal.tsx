@@ -16,11 +16,12 @@ export const CreateWorktreeModal: React.FC<{ isOpen: boolean; onClose: () => voi
   const [error, setError] = useState<string | null>(null);
   const busyRef = useRef(false);
   const launchedRef = useRef(false);
+  const wasOpenRef = useRef(false);
   const { createWorktree, repoPath } = useWorktreeStore();
   const { createSession, profiles, defaultProfileId } = useTerminalStore();
   const dialogRef = useDialog(isOpen, onClose, isSubmitting, () => !launchedRef.current);
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && !wasOpenRef.current) {
       launchedRef.current = false;
       setBranchName('');
       setBaseBranch('');
@@ -28,7 +29,8 @@ export const CreateWorktreeModal: React.FC<{ isOpen: boolean; onClose: () => voi
       setError(null);
       setProfileId(defaultProfileId);
     }
-  }, [isOpen]);
+    wasOpenRef.current = isOpen;
+  }, [isOpen, defaultProfileId]);
   // Profiles can arrive after the modal opens; keep the selection valid.
   useEffect(() => {
     if (!isOpen || profiles.length === 0) return;
@@ -112,6 +114,7 @@ export const CreateWorktreeModal: React.FC<{ isOpen: boolean; onClose: () => voi
             <label className="block">
               Branch name
               <input
+                data-autofocus
                 required={!created}
                 disabled={Boolean(created)}
                 maxLength={200}

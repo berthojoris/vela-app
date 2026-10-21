@@ -56,7 +56,7 @@ export const OpenTerminalModal: React.FC<OpenTerminalModalProps> = ({
       }
     }
     wasOpenRef.current = isOpen;
-  }, [isOpen, initialDirectory, initialProfileId]);
+  }, [isOpen, initialDirectory, initialProfileId, activeWorktree?.path, defaultProfileId, profiles, repoPath]);
 
   // Profiles load asynchronously: only fill an empty selection. An explicitly
   // requested profile that is missing stays missing so the launch button stays
@@ -220,6 +220,7 @@ export const OpenTerminalModal: React.FC<OpenTerminalModalProps> = ({
 
               <div className="flex items-center gap-1.5">
                 <input
+                  data-autofocus
                   ref={inputRef}
                   aria-label="Working directory path"
                   type="text"

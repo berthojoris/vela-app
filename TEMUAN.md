@@ -2,16 +2,63 @@
 
 - **Tanggal analisis:** 2026-10-21
 - **Cakupan:** seluruh frontend (`src/`), backend Rust (`src-tauri/src/`), konfigurasi Tauri, test, dan alur IPC.
-- **Versi working tree saat analisis:** 0.1.1 (5 file versi sudah konsisten).
-- **Sifat analisis:** review statis + eksperimen Git/PowerShell terisolasi. Playwright tidak dijalankan.
+- **Versi working tree saat analisis awal:** 0.1.1 (5 file versi sudah konsisten).
+- **Sifat analisis awal:** review statis + eksperimen Git/PowerShell terisolasi. Playwright belum dijalankan pada tahap ini.
 
-> Catatan: selama analisis, working tree berubah di luar tindakan analis — bump versi ke 0.1.1 di 5 file dan perubahan string prompt PowerShell di `src-tauri/src/pty/manager.rs`. Tidak ada kode yang diubah oleh analisis ini.
+> Catatan historis: selama analisis awal, working tree berubah di luar tindakan analis — bump versi ke 0.1.1 di 5 file dan perubahan string prompt PowerShell di `src-tauri/src/pty/manager.rs`. Tahap analisis awal tersebut tidak mengubah kode.
 
-## Ringkasan eksekutif
+## Status implementasi perbaikan — 2026-10-21
 
-Tidak ditemukan bug yang membuat aplikasi crash total. Sebagian besar temuan adalah bug perilaku, edge case Git/path, race condition UI, dan inkonsistensi dokumentasi. Satu temuan berpotensi menghilangkan file dari working tree (rollback rename), dan satu temuan berdampak keamanan (preset Claude melewati permission prompt sementara dokumentasi menyatakan sebaliknya).
+Seluruh 20 temuan telah ditangani pada working tree versi **0.2.0**. Versi aplikasi tidak dinaikkan dan release build tidak dijalankan. Bagian analisis awal di bawah dipertahankan sebagai riwayat; lokasi baris di sana merujuk kode sebelum perbaikan.
 
-**Status verifikasi pada tree saat ini:**
+| # | Perbaikan yang diimplementasikan |
+| --- | --- |
+| 1 | Parser mempertahankan sumber rename; rollback memakai `git restore --source=HEAD --staged --worktree` untuk kedua path. Rename dengan perubahan lain pada sumber ditolak agar tidak menimpa file independen. |
+| 2 | Key, pilihan, highlight, dan pemulihan pilihan memakai identitas `status + path`. Preview/hitungan staged deletion terpisah dari untracked replacement; rollback ambigu dinonaktifkan di UI dan ditolak ulang oleh backend. |
+| 3 | Commit sukses memicu refresh status/sidebar meskipun auto-check OFF. Cache target diinvalidasi, termasuk ketika repo aktif berubah; kegagalan refresh tidak dilaporkan sebagai commit gagal. |
+| 4 | `useDialog` menangani Escape dan Tab hanya untuk dialog teratas. Konfirmasi rollback/reset memakai focus trap sendiri, dan Escape tidak menutup dialog saat operasi Git berjalan. |
+| 5 | Fokus awal diarahkan ke input direktori, input branch, atau judul review yang netral. Konfirmasi memfokuskan Batal, bukan aksi destruktif. |
+| 6 | Refresh periodik dan saat window fokus dijeda selama Diff terbuka. Pembacaan status Git memakai `GIT_OPTIONAL_LOCKS=0` agar tidak mengambil optional index-refresh lock. |
+| 7 | Kegagalan status satu worktree tidak menggagalkan daftar. `dirty_files_count: null` beserta `status_error` dibedakan dari clean; UI menampilkan `status unavailable`/`not checked` dan menyediakan refresh. |
+| 8 | Fast path tanpa deteksi dibatasi pada root worktree yang diketahui secara tepat. Cwd baru di subdirektori diperiksa sehingga nested repo tidak otomatis diarahkan ke repo luar. |
+| 9 | Target repo/worktree lama dibersihkan selama deteksi cwd yang belum diketahui dan saat deteksi gagal. Error lama dibersihkan pada fast path; respons stale tidak boleh mengisi cache. |
+| 10 | Prompt PowerShell tidak menambahkan separator ganda; parser OSC 7 dan normalisasi path mempertahankan drive root `C:/`, termasuk laporan lama `file:///C://`. |
+| 11 | Status bar membaca versi dari `package.json`, bukan string hardcoded. |
+| 12 | Sidebar memberi label `new file` pada untracked. Hitungan nol tidak dipresentasikan sebagai hitungan isi file; sidebar tetap tidak membaca konten untracked. |
+| 13 | Memilih mode split yang sudah aktif menjadi no-op, sehingga fokus secondary tidak menukar posisi pane. |
+| 14 | Preset agent PowerShell memasang integrasi prompt sebelum menjalankan perintah agent, tanpa mengubah flag permission. Argumen `-File`/encoded command tetap dipertahankan. |
+| 15 | Nama dan lokasi worktree baru diturunkan dari main worktree, termasuk ketika pembuatan dimulai dari linked worktree. |
+| 16 | Area preview diff memakai `select-text`; chrome modal tetap tidak dapat diseleksi. |
+| 17 | Kegagalan metadata/read untracked diisolasi per file dan ditampilkan sebagai preview unavailable; file lain tetap dapat direview. |
+| 18 | Badge memprioritaskan conflict/deletion/rename/copy/addition sebelum modification; `AM` tampil ADD dan `RM` tampil REN. |
+| 19 | Cache hanya ditulis setelah guard request lolos. Regression test memastikan respons dari komponen lama yang unmount tidak menimpa data baru. |
+| 20 | Handler double-click header mengabaikan tombol window beserta elemen SVG di dalamnya. |
+
+Hardening terkait: pathspec Git dibuat literal agar nama seperti `[a].txt` tidak mengenai file lain; kegagalan Git saat rollback tidak lagi ditutupi oleh penghapusan filesystem manual. Forced refresh setelah mutasi tidak memakai hasil pemeriksaan yang dimulai sebelum mutasi.
+
+**Validasi setelah perbaikan:**
+
+| Pemeriksaan | Hasil |
+| --- | --- |
+| `npm run build` (`tsc && vite build`) | Lulus |
+| `npm test` | 95/95 lulus |
+| `npm run lint` | 0 error, 3 warning Fast Refresh yang sudah ada sebelumnya |
+| `npm run format:check` | Lulus |
+| `npm run test:ui` | 2/2 lulus di Edge headless, 1280×820 dan 800×550; memakai mock IPC browser, bukan aplikasi Tauri native |
+| `cargo check --locked` | Lulus |
+| `cargo test --locked --lib` | 26/26 lulus, termasuk Git terisolasi dan ConPTY native |
+| `cargo clippy --all-targets -- -D warnings` | Lulus |
+| `cargo fmt --check` | Lulus |
+
+Test Shift+Enter sempat gagal pada run paralel ketika test native baru ikut memulai shell. Test ConPTY kini diserialkan dengan mutex khusus test; run penuh terakhir lulus. Ini perubahan isolasi test, bukan penghapusan assertion atau perubahan perilaku terminal untuk menutupi kegagalan.
+
+Lihat bagian runtime untuk batas verifikasi WSL dan aplikasi TUI. Hasil lint/build/test tidak berarti seluruh skenario runtime atau performa sudah terjamin.
+
+## Ringkasan analisis awal
+
+Tidak ditemukan bug yang membuat aplikasi crash total. Sebagian besar temuan adalah bug perilaku, edge case Git/path, race condition UI, dan inkonsistensi dokumentasi. Satu temuan berpotensi menghilangkan file dari working tree (rollback rename).
+
+**Hasil pemeriksaan awal, sebelum perbaikan:**
 
 | Pemeriksaan | Hasil |
 | --- | --- |
@@ -25,9 +72,9 @@ Tidak ditemukan bug yang membuat aplikasi crash total. Sebagian besar temuan ada
 | `npm run format:check` | Lulus |
 | `npm run test:ui` (Playwright) | Tidak dijalankan |
 
-Semua bug di bawah bersifat perilaku/edge case sehingga tidak tertangkap oleh suite yang ada.
+Temuan berikut mendokumentasikan perilaku/edge case sebelum perbaikan; regression test terkait telah ditambahkan.
 
-## Tabel prioritas
+## Tabel prioritas awal (sebelum perbaikan)
 
 | # | Temuan | Tingkat | Lokasi utama | Status |
 | --- | --- | --- | --- | --- |
@@ -51,7 +98,6 @@ Semua bug di bawah bersifat perilaku/edge case sehingga tidak tertangkap oleh su
 | 18 | Badge status kurang akurat untuk kode gabungan | Rendah | `src/components/diff/DiffViewerModal.tsx:121` | Terkonfirmasi |
 | 19 | Cache `ChangedFilesPanel` ditulis sebelum guard request | Rendah | `src/components/sidebar/ChangedFilesPanel.tsx:60` | Terkonfirmasi |
 | 20 | Double-click title bar pada tombol window ikut toggle maximize | Rendah | `src/components/layout/TitleBar.tsx:75` | Terkonfirmasi |
-| 21 | Preset Claude melewati permission prompt, dokumentasi menyatakan sebaliknya | Tinggi (keamanan/dokumentasi) | `src-tauri/src/agent/supervisor.rs:88`, `README.md:13`, `src/components/modals/CreateWorktreeModal.tsx:152` | Terkonfirmasi |
 
 ---
 
@@ -108,7 +154,7 @@ git status --porcelain=v1 -z:
 - `selectFile` mencari berdasarkan path saja, sehingga entri `??` tidak pernah terpilih; klik selalu memilih entri `D`.
 - Rollback pada path tersebut ambigu: user mungkin mengira menghapus file untracked, tetapi backend memulihkan konten HEAD dan menimpa file lokal.
 
-**Saran perbaikan:** gunakan key gabungan `status + path`, definisikan semantik rollback untuk kombinasi status ganda, dan pertimbangkan `git status --porcelain=v2`. Minimal, tampilkan kedua entri dengan label status yang jelas dan cegah rollback ambigu.
+**Saran perbaikan (dikoreksi setelah verifikasi):** mengganti React key saja tidak cukup. Gunakan identitas entri yang membedakan `status + path` secara konsisten untuk key, pemilihan file, penandaan entri aktif, dan pemulihan pilihan setelah refresh. Definisikan semantik rollback untuk kombinasi status ganda; selama backend masih menerima path saja, cegah rollback ambigu pada path tersebut. Pertimbangkan `git status --porcelain=v2`, tetapi pergantian format tidak otomatis menyelesaikan identitas entri atau semantik rollback. Tambahkan regression test untuk memilih kedua entri dan memastikan rollback tidak menimpa konten lokal akibat salah identifikasi.
 
 ---
 
@@ -136,7 +182,7 @@ git status --porcelain=v1 -z:
 
 **Dampak:** UX salah; kode handler Escape konfirmasi tidak pernah dieksekusi. Tidak ada aksi destruktif otomatis, tetapi perilakunya membingungkan.
 
-**Saran perbaikan:** beri `useDialog` flag `nestedDialogOpen` (dari state konfirmasi), atau cek keberadaan `[role="alertdialog"]` di dalam modal dan jangan tutup modal induk saat konfirmasi aktif.
+**Saran perbaikan (dikoreksi setelah verifikasi):** beri `useDialog` informasi konfirmasi aktif dan pastikan Escape ditangani oleh dialog teratas. Sekadar menandai parent sebagai busy atau melewati `onClose` tidak cukup jika parent tetap memanggil `stopImmediatePropagation()`: handler konfirmasi masih tidak menerima event. Saat konfirmasi aktif, parent harus menyerahkan event sebelum menghentikan propagasi, atau satu handler terpusat membatalkan konfirmasi alih-alih menutup Diff. Tetap cegah Escape diteruskan ke terminal, dan jangan membatalkan operasi Git yang sedang berjalan. Tambahkan test bahwa Escape pertama hanya menutup konfirmasi dan Escape berikutnya menutup Diff ketika tidak busy.
 
 ---
 
@@ -172,7 +218,9 @@ Guard hanya memeriksa `isOpenTerminalModalOpen` dan `isCreateWorktreeOpen`. Stat
 
 Jika satu worktree tidak dapat diakses, locked, korup, atau status-nya melewati batas output 2 MB, seluruh perintah `list_worktrees` gagal. Refresh manual (`WorktreeSidebar.tsx:202`) dan auto-check memakai `check_status=true`, sehingga sidebar bisa tidak menampilkan worktree sama sekali.
 
-**Saran perbaikan:** jadikan status per-worktree non-fatal (`unwrap_or(0)` plus penanda error), atau periksa status hanya untuk worktree aktif. Pertimbangkan paralelisasi dengan batas konkurensi.
+**Saran perbaikan (dikoreksi setelah verifikasi):** jadikan kegagalan status per-worktree non-fatal bagi daftar, tetapi representasikan hasilnya sebagai status tidak diketahui/gagal diperiksa, bukan `clean`. Jangan langsung memakai `unwrap_or(0)` tanpa memperbarui model dan UI, karena nol saat ini ditafsirkan sebagai tidak ada perubahan. Pertahankan error per-worktree dan sediakan retry; bila mempertahankan hitungan terakhir, tandai sebagai stale. Jika memilih hanya memeriksa worktree aktif, worktree lain juga harus ditandai belum diperiksa. Pertimbangkan paralelisasi dengan batas konkurensi.
+
+**Koreksi kondisi reproduksi dan dampak:** eksperimen menunjukkan `git worktree lock` sendiri tidak membuat `git status` gagal. Worktree dengan `.git` yang menunjuk ke repository tidak valid tetap tercantum dalam `worktree list`, tetapi status-nya gagal dan menggagalkan hasil backend. Pada refresh frontend, daftar lama dipertahankan bersama pesan error, bukan otomatis dikosongkan; kegagalan pemuatan awal tetap dapat membuat daftar belum tersedia.
 
 ---
 
@@ -306,41 +354,56 @@ Hasil disimpan ke `changesCache` sebelum memeriksa `id !== request.current`. Res
 
 ---
 
-## 21. Preset Claude melewati permission prompt, dokumentasi menyatakan sebaliknya
-
-**Lokasi:** `src-tauri/src/agent/supervisor.rs:88-94`, `README.md:13`, `src/components/modals/CreateWorktreeModal.tsx:152-154`.
-
-Preset `agent-claude` menambahkan `--dangerously-skip-permissions`. Namun:
-
-- `README.md:13` masih menyatakan "Safe agent defaults: no automatic bypass of agent permission checks."
-- `CreateWorktreeModal.tsx:152-154` masih menulis "Agents keep their normal permission checks."
-
-Untuk Claude Code, kedua teks tersebut tidak benar. Ini misinformation keamanan yang user-facing. `AGENTS.md:114` sudah mendokumentasikan pengecualian ini.
-
-**Saran perbaikan:** perbarui README dan teks modal agar menyebut pengecualian Claude secara eksplisit, atau kembalikan flag jika tidak diinginkan. Pastikan perubahan di-commit bersama dokumentasinya.
-
----
-
 ## Temuan yang perlu verifikasi runtime
 
-1. **Deteksi repo non-Git pada locale non-Inggris.** `find_repo_root` (`src-tauri/src/git/worktree.rs:139`) mencocokkan teks Inggris `"not a git repository"`. Jika Git mengeluarkan pesan lokal, folder non-repo bisa dilaporkan sebagai error, bukan `Ok(None)`. Lebih aman memeriksa exit code/perilaku `rev-parse`.
-2. **Escape dikirim sebagai Win32 key record.** `XTermView.tsx:187-195` selalu mengirim sequence `ESC[27;..._`. Test yang ada hanya mencakup PowerShell. Perlu diuji di Git Bash/WSL/vim/less/fzf; jika ConPTY tidak menerjemahkannya untuk aplikasi VT, Escape bisa muncul sebagai karakter literal.
-3. **Race proses keluar sangat cepat.** Reader menunggu gate `start_output`, sementara monitor menutup pseudoconsole segera setelah child keluar (`manager.rs:253`). Untuk perintah yang keluar sebelum UI terpasang, ada kemungkinan `pty-error` semu di samping `pty-exit`. Test natural-exit yang ada tidak menunda pembukaan gate.
+Catatan awal verifikasi lanjutan (2026-10-21): ketiga poin berikut **belum merupakan bug runtime terkonfirmasi**. Pada tahap awal ini, Playwright dan pengujian interaktif WebView2 belum dijalankan.
+
+Pembaruan implementasi: Playwright kini sudah dijalankan dalam mode browser/mock IPC. Test ConPTY native juga ditambahkan; hasil setelah perbaikan dicatat pada masing-masing poin. Pengujian interaktif window Tauri/WebView2 tetap belum dilakukan.
+
+### 1. Deteksi repo non-Git pada locale non-Inggris
+
+`find_repo_root` (`src-tauri/src/git/worktree.rs:139`) mencocokkan teks Inggris `"not a git repository"`. Jika Git mengeluarkan pesan lokal, folder non-repo bisa dilaporkan sebagai error, bukan `Ok(None)`.
+
+**Hasil pemeriksaan awal:** percobaan pada folder non-repo sementara dengan `LANGUAGE=de_DE`, `LC_ALL=de_DE.UTF-8`, dan `LANG=de_DE.UTF-8` tetap menghasilkan pesan Inggris pada instalasi Git lokal. Risiko pencocokan pesan terlihat di kode, tetapi kegagalan akibat locale **belum tereproduksi**.
+
+**Verifikasi berikutnya:** gunakan instalasi Git yang benar-benar menghasilkan pesan terlokalisasi. Perbaikan klasifikasi harus membedakan folder non-repo dari kegagalan lain; jangan menganggap seluruh exit code nonzero sebagai `Ok(None)`.
+
+**Status setelah perbaikan:** proses Git internal dipaksa memakai `LC_ALL=C` dan `LANGUAGE=C`, sehingga klasifikasi tidak bergantung pada locale pengguna. Regression test memeriksa konfigurasi locale tersebut, folder non-repo menghasilkan `None`, dan `.git` rusak tetap menghasilkan error.
+
+### 2. Kompatibilitas Escape sebagai Win32 key record
+
+`XTermView.tsx:187-195` mengirim sequence `ESC[27;..._` untuk Escape non-IME tanpa Meta. Perlu diuji di Git Bash/WSL/vim/less/fzf; kemungkinan sequence tampil sebagai karakter literal masih hipotesis.
+
+**Hasil pemeriksaan awal:** test frontend memastikan sequence dikirim ke IPC, tetapi xterm/IPC dimock sehingga tidak membuktikan penerjemahan oleh ConPTY. Test native PowerShell `conpty_shift_enter_powershell` menguji **Shift+Enter dan Ctrl+J**, bukan kompatibilitas Escape.
+
+**Verifikasi berikutnya:** uji Escape secara native pada shell dan aplikasi TUI tersebut. Bedakan keberhasilan pengiriman sequence dari keberhasilan aplikasi menerima tombol Escape.
+
+**Status setelah perbaikan:** test ConPTY native lulus untuk PowerShell (`ConsoleKey.Escape`) dan Git Bash (`read` menerima byte ESC). Sequence Escape tidak diubah karena dugaan karakter literal tidak tereproduksi pada kedua target ini. WSL Ubuntu terdaftar, tetapi percobaan menjalankannya gagal karena izin logon lingkungan: `Wsl/Service/CreateInstance/CreateVm/HCS/0x80070569`. Escape di WSL/vim/less/fzf belum terverifikasi; hasil PowerShell/Git Bash tidak boleh dianggap sebagai bukti untuk semua aplikasi tersebut.
+
+### 3. Proses keluar sebelum gate output dibuka
+
+Reader menunggu gate `start_output`, sementara monitor menutup pseudoconsole setelah child keluar (`src-tauri/src/pty/manager.rs:253-265`). Dugaan `pty-error` semu bersamaan dengan `pty-exit` untuk proses yang keluar sebelum UI siap masih **hipotesis**, bukan konsekuensi yang sudah terbukti dari gate tersebut.
+
+**Hasil pemeriksaan awal:** test natural-exit yang ada membuka gate sebelum mengirim perintah keluar. Test shutdown sebelum gate dibuka mencakup pembatalan sesi, bukan natural exit cepat dengan pembukaan gate yang ditunda.
+
+**Verifikasi berikutnya:** jalankan proses yang segera selesai, tunda `start_output`, lalu periksa output akhir, jumlah dan kode event exit, event error, serta pembersihan sesi. Penutupan pseudoconsole sebelum gate terbuka saja tidak cukup untuk menyatakan ada bug.
+
+**Status setelah perbaikan:** test native menunggu proses selesai dan monitor mengambil master pseudoconsole sebelum membuka gate. Output akhir berhasil didrain, tepat satu exit diterima dengan kode 0, tidak ada `pty-error`, dan sesi dibersihkan. Dugaan race ini tidak tereproduksi; pola worker/gate/backpressure produksi dipertahankan.
 
 ---
 
-## Celah test
+## Celah test awal dan penutupannya
 
-- Tidak ada test rollback untuk rename atau status `D` + `??`.
-- Test commit tidak memverifikasi refresh worktree/sidebar.
-- Tidak ada test Escape pada konfirmasi bertingkat di Diff Viewer.
-- Tidak ada test fokus awal modal.
-- Tidak ada test untuk `C:\` (drive root) atau path UNC.
-- Tidak ada test kegagalan `git status` pada satu worktree.
-- Tidak ada test repo bersarang di dalam worktree.
-- Tidak ada test integrasi OSC 7 untuk terminal agent.
+- Rollback rename murni, rename dengan perubahan staged/unstaged, sumber rename yang dibuat ulang, serta status `D` + `??`: tercakup regression Git terisolasi.
+- Commit → refresh sidebar, invalidasi cache lintas repo, dan forced refresh setelah pembacaan lama: tercakup test store.
+- Escape bertingkat, focus trap, fokus awal modal, dan proteksi operasi berjalan: tercakup test komponen.
+- Drive root dan UNC: tercakup test normalisasi/parser; prompt drive root juga diperiksa lewat ConPTY PowerShell native.
+- Kegagalan status satu worktree serta preview file yang hilang: tercakup regression backend; tampilan unavailable/retry tercakup test UI.
+- Nested repo, pembersihan state saat error, dan respons stale: tercakup test store.
+- Integrasi OSC 7 preset agent: tercakup test penyusunan argumen dan eksekusi PowerShell native berargumen `-Command`.
+- WSL/vim/less/fzf dan pengujian interaktif window Tauri tetap menjadi batas verifikasi runtime, bukan bug yang sudah terkonfirmasi.
 
-## Urutan perbaikan yang disarankan
+## Urutan perbaikan awal (sudah ditangani)
 
 1. Rollback rename dan status ganda (`D` + `??`) — berpotensi kehilangan/menimpa file.
 2. Commit → refresh sidebar/worktree.
@@ -350,4 +413,3 @@ Untuk Claude Code, kedua teks tersebut tidak benar. Ini misinformation keamanan 
 6. Deteksi repo bersarang dan pembersihan state saat error.
 7. Normalisasi drive root dan integrasi OSC 7 untuk agent.
 8. Temuan kosmetik: badge status, untracked counts, split toggle, status bar version, seleksi teks diff, title bar double-click, cache guard.
-9. Sinkronkan dokumentasi keamanan preset Claude.

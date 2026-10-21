@@ -4,6 +4,8 @@ import { ChangedFile, WorktreeChanges } from '../../types';
 import { tauriIpc } from '../../lib/tauriIpc';
 import { errorMessage } from '../../lib/errors';
 import { useDiffStore } from '../../stores/useDiffStore';
+import { changeKey } from '../../lib/gitStatus';
+import { cacheChanges, getCachedChanges } from '../../lib/worktreeChangesCache';
 
 interface ChangedFilesPanelProps {
   worktreePath: string;
@@ -12,14 +14,6 @@ interface ChangedFilesPanelProps {
   refreshKey: unknown;
   /** Mirrors the Git auto-check switch. When false, opening or switching worktrees never runs Git. */
   autoRefresh: boolean;
-}
-
-// Last known changes per worktree, so switching tabs with the auto-check OFF shows the
-// previous result instantly instead of re-running `git status`.
-const changesCache = new Map<string, WorktreeChanges>();
-
-function cacheKey(path: string): string {
-  return path.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 }
 
 export function describeStatus(status: string): { letter: string; label: string; color: string } {
@@ -44,9 +38,7 @@ export const ChangedFilesPanel: React.FC<ChangedFilesPanelProps> = ({
   refreshKey,
   autoRefresh,
 }) => {
-  const [changes, setChanges] = useState<WorktreeChanges | null>(
-    () => changesCache.get(cacheKey(worktreePath)) ?? null
-  );
+  const [changes, setChanges] = useState<WorktreeChanges | null>(() => getCachedChanges(worktreePath) ?? null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const request = useRef(0);
@@ -57,9 +49,8 @@ export const ChangedFilesPanel: React.FC<ChangedFilesPanelProps> = ({
     setLoading(true);
     try {
       const result = await tauriIpc.getWorktreeChanges(worktreePath);
-      if (changesCache.size > 32) changesCache.clear();
-      changesCache.set(cacheKey(worktreePath), result);
       if (id !== request.current) return;
+      cacheChanges(worktreePath, result);
       setChanges(result);
       setError(null);
     } catch (err) {
@@ -72,7 +63,7 @@ export const ChangedFilesPanel: React.FC<ChangedFilesPanelProps> = ({
   // A different worktree must never show the previous one's files, even briefly.
   useEffect(() => {
     ++request.current;
-    setChanges(changesCache.get(cacheKey(worktreePath)) ?? null);
+    setChanges(getCachedChanges(worktreePath) ?? null);
     setError(null);
     setLoading(false);
   }, [worktreePath]);
@@ -99,7 +90,8 @@ export const ChangedFilesPanel: React.FC<ChangedFilesPanelProps> = ({
   const openFile = async (file: ChangedFile) => {
     await openDiffModal(worktreePath);
     const diff = useDiffStore.getState();
-    const match = diff.worktreePath === worktreePath ? diff.diffs.find((d) => d.path === file.path) : undefined;
+    const match =
+      diff.worktreePath === worktreePath ? diff.diffs.find((d) => changeKey(d) === changeKey(file)) : undefined;
     if (match) diff.selectFile(match);
   };
 
@@ -172,7 +164,7 @@ export const ChangedFilesPanel: React.FC<ChangedFilesPanelProps> = ({
               const status = describeStatus(file.status);
               const { name, dir } = splitPath(file.path);
               return (
-                <li key={file.path}>
+                <li key={changeKey(file)}>
                   <button
                     type="button"
                     onClick={() => {
@@ -195,12 +187,16 @@ export const ChangedFilesPanel: React.FC<ChangedFilesPanelProps> = ({
                       </span>
                       {dir && <span className="truncate text-[9.5px] font-mono text-orca-muted">{dir}</span>}
                     </span>
-                    {(file.additions > 0 || file.deletions > 0) && (
-                      <span className="shrink-0 text-[9.5px] font-mono">
-                        {file.additions > 0 && <span className="text-orca-emerald">+{file.additions}</span>}
-                        {file.additions > 0 && file.deletions > 0 && ' '}
-                        {file.deletions > 0 && <span className="text-orca-rose">-{file.deletions}</span>}
-                      </span>
+                    {file.status === '??' ? (
+                      <span className="shrink-0 text-[9.5px] text-purple-400">new file</span>
+                    ) : (
+                      (file.additions > 0 || file.deletions > 0) && (
+                        <span className="shrink-0 text-[9.5px] font-mono">
+                          {file.additions > 0 && <span className="text-orca-emerald">+{file.additions}</span>}
+                          {file.additions > 0 && file.deletions > 0 && ' '}
+                          {file.deletions > 0 && <span className="text-orca-rose">-{file.deletions}</span>}
+                        </span>
+                      )
                     )}
                   </button>
                 </li>

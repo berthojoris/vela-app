@@ -20,6 +20,10 @@ beforeEach(() => {
   });
   ipc.spawnTerminal.mockReset();
 });
+it('initially focuses the directory input, not the Close button', async () => {
+  render(<OpenTerminalModal isOpen onClose={() => {}} />);
+  await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('Working directory path')));
+});
 it('shows launch errors inline and keeps input available for retry', async () => {
   const close = vi.fn();
   ipc.spawnTerminal.mockRejectedValue('Directory does not exist');

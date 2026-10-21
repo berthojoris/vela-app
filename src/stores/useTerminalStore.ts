@@ -170,6 +170,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   },
 
   setSplitMode: (mode: 'none' | 'vertical' | 'horizontal') => {
+    if (mode === get().splitMode) return;
     const { sessions, activeSessionId } = get();
     if (mode !== 'none' && sessions.length > 1) {
       const secondary = sessions.find((s) => s.id !== activeSessionId);

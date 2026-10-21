@@ -2,6 +2,17 @@ import { create } from 'zustand';
 import { FileDiff } from '../types';
 import { tauriIpc } from '../lib/tauriIpc';
 import { errorMessage } from '../lib/errors';
+import { changeKey } from '../lib/gitStatus';
+import { normalizePath, useWorktreeStore } from './useWorktreeStore';
+import { invalidateChanges } from '../lib/worktreeChangesCache';
+
+async function refreshSidebar(worktreePath: string): Promise<void> {
+  invalidateChanges(worktreePath);
+  const worktrees = useWorktreeStore.getState();
+  if (worktrees.worktrees.some((item) => normalizePath(item.path) === normalizePath(worktreePath))) {
+    await worktrees.refreshWorktrees(true, true);
+  }
+}
 
 interface DiffState {
   isOpen: boolean;
@@ -77,10 +88,10 @@ export const useDiffStore = create<DiffState>((set, get) => ({
     try {
       const files = await tauriIpc.getWorktreeDiff(worktreePath);
       if (!current()) return;
-      const selected = get().selectedFile?.path;
+      const selected = get().selectedFile;
       set({
         diffs: files,
-        selectedFile: files.find((file) => file.path === selected) ?? files[0] ?? null,
+        selectedFile: files.find((file) => selected && changeKey(file) === changeKey(selected)) ?? files[0] ?? null,
         isLoading: false,
       });
     } catch (error) {
@@ -111,7 +122,7 @@ export const useDiffStore = create<DiffState>((set, get) => ({
     });
   },
   selectFile: (file) => {
-    const selected = get().diffs.find((candidate) => candidate.path === file.path);
+    const selected = get().diffs.find((candidate) => changeKey(candidate) === changeKey(file));
     if (selected) set({ selectedFile: selected });
   },
   setCommitMessage: (commitMessage) => {
@@ -142,7 +153,7 @@ export const useDiffStore = create<DiffState>((set, get) => ({
     }
     // Refresh failure must never turn an already successful commit into "commit failed".
     set({ isCommitting: false, commitMessage: '', commitResult: result });
-    await get().refreshDiffs();
+    await Promise.all([get().refreshDiffs(), refreshSidebar(worktreePath)]);
     return result;
   },
 
@@ -155,6 +166,12 @@ export const useDiffStore = create<DiffState>((set, get) => ({
     if (!state.isOpen || !worktreePath || state.isLoading) {
       throw new Error('Refresh and review the current worktree before rolling back.');
     }
+    const entries = state.diffs.filter((file) => file.path === filePath);
+    if (entries.length !== 1 || entries[0].rollback_error) {
+      throw new Error(
+        entries[0]?.rollback_error || 'This path has changed or is ambiguous. Refresh before rolling back.'
+      );
+    }
     ++requestSequence;
     set({ isRollingBack: true, rollingBackFile: filePath, rollbackError: null });
     try {
@@ -165,7 +182,7 @@ export const useDiffStore = create<DiffState>((set, get) => ({
       throw new Error(detail);
     }
     set({ isRollingBack: false, rollingBackFile: null });
-    await get().refreshDiffs();
+    await Promise.all([get().refreshDiffs(), refreshSidebar(worktreePath)]);
   },
 
   resetAll: async () => {
@@ -187,6 +204,6 @@ export const useDiffStore = create<DiffState>((set, get) => ({
       throw new Error(detail);
     }
     set({ isRollingBack: false });
-    await get().refreshDiffs();
+    await Promise.all([get().refreshDiffs(), refreshSidebar(worktreePath)]);
   },
 }));
