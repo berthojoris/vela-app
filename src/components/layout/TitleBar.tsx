@@ -5,6 +5,45 @@ import { useWorktreeStore } from '../../stores/useWorktreeStore';
 import { useTerminalStore } from '../../stores/useTerminalStore';
 import velaLogo from '../../assets/vela_logo.webp';
 import { useNoticeStore } from '../../stores/useNoticeStore';
+import { describeDisplayPath, pathCharBudget } from '../../lib/formatPath';
+
+/** Character budget that follows the window width so paths compact before clipping. */
+function usePathCharBudget(): number {
+  const [budget, setBudget] = useState(() => pathCharBudget(typeof window === 'undefined' ? 1280 : window.innerWidth));
+
+  useEffect(() => {
+    const update = () => setBudget(pathCharBudget(window.innerWidth));
+    update();
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, []);
+
+  return budget;
+}
+
+/**
+ * Full path of the active project. The directory prefix is dimmed and the
+ * final folder name stays bright. Long paths compact their middle segments into
+ * "..." (e.g. C:\DEKSTOP\LARAVELPACKAGE\...\folder-project) instead of being
+ * clipped, and the tooltip always carries the untouched full path.
+ */
+const PathLabel: React.FC<{ path: string; muted?: boolean }> = ({ path, muted }) => {
+  const budget = usePathCharBudget();
+  const { display, dir, name, expanded } = describeDisplayPath(path, budget);
+  if (!display) return null;
+
+  return (
+    <span
+      className="flex min-w-0 max-w-[min(52vw,560px)] items-baseline whitespace-nowrap font-mono text-[11px] leading-none"
+      title={expanded}
+    >
+      {dir && <span className="min-w-0 truncate text-orca-muted/80">{dir}</span>}
+      <span className={`max-w-full shrink-0 truncate font-medium ${muted ? 'text-orca-text/80' : 'text-orca-text'}`}>
+        {name}
+      </span>
+    </span>
+  );
+};
 
 export const TitleBar: React.FC = () => {
   const [isMaximized, setIsMaximized] = useState(false);
@@ -86,24 +125,20 @@ export const TitleBar: React.FC = () => {
         </div>
 
         {repoPath ? (
-          <div className="flex items-center gap-1.5 ml-2 pl-3 border-l border-orca-border text-orca-muted">
-            <FolderGit2 className="w-3.5 h-3.5 text-orca-accent" />
-            <span className="truncate max-w-[140px] text-orca-text font-medium" title={repoPath}>
-              {repoPath.split('/').pop()}
-            </span>
+          <div className="flex items-center gap-1.5 ml-2 pl-3 border-l border-orca-border text-orca-muted min-w-0">
+            <FolderGit2 className="w-3.5 h-3.5 shrink-0 text-orca-accent" />
+            <PathLabel path={repoPath} />
 
             {activeWorktree && (
-              <div className="flex items-center gap-1 bg-orca-card px-2 py-0.5 rounded border border-orca-border text-[11px] text-orca-emerald font-mono">
+              <div className="flex items-center gap-1 shrink-0 bg-orca-card px-2 py-0.5 rounded border border-orca-border text-[11px] text-orca-emerald font-mono">
                 <GitBranch className="w-3 h-3" />
                 <span>{activeWorktree.branch}</span>
               </div>
             )}
           </div>
         ) : currentCwd ? (
-          <div className="flex items-center gap-1.5 ml-2 pl-3 border-l border-orca-border text-orca-muted">
-            <span className="truncate max-w-[140px] text-orca-muted font-mono" title={currentCwd}>
-              {currentCwd.split('/').pop() || currentCwd}
-            </span>
+          <div className="flex items-center gap-1.5 ml-2 pl-3 border-l border-orca-border text-orca-muted min-w-0">
+            <PathLabel path={currentCwd} muted />
           </div>
         ) : null}
       </div>
