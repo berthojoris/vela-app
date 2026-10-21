@@ -65,33 +65,46 @@ impl AgentSupervisor {
             });
         }
 
-        for (id, name, command, agent_type) in [
+        // Extra flags are appended to the agent command; the PATH check only
+        // looks at the bare command name.
+        for (id, name, command, flags, agent_type) in [
             (
                 "agent-opencode",
                 "OpenCode",
                 "opencode",
+                "",
                 AgentType::OpenCode,
             ),
-            ("agent-droid", "Droid CLI", "droid", AgentType::DroidCli),
+            ("agent-droid", "Droid CLI", "droid", "", AgentType::DroidCli),
             (
                 "agent-antigravity",
                 "Antigravity",
                 "agy",
+                "",
                 AgentType::Antigravity,
             ),
+            // The project owner explicitly opted into skipping Claude Code's
+            // permission prompts for this preset.
             (
                 "agent-claude",
                 "Claude Code",
                 "claude",
+                "--dangerously-skip-permissions",
                 AgentType::ClaudeCode,
             ),
-            ("agent-gemini", "Gemini CLI", "gemini", AgentType::GeminiCli),
-            ("agent-aider", "Aider AI", "aider", AgentType::Aider),
-            ("agent-codex", "Codex CLI", "codex", AgentType::Codex),
+            (
+                "agent-gemini",
+                "Gemini CLI",
+                "gemini",
+                "",
+                AgentType::GeminiCli,
+            ),
+            ("agent-aider", "Aider AI", "aider", "", AgentType::Aider),
+            ("agent-codex", "Codex CLI", "codex", "", AgentType::Codex),
         ] {
             if Self::check_binary_exists(command) {
                 profiles.push(Self::shell_agent_profile(
-                    id, name, pwsh_bin, command, agent_type,
+                    id, name, pwsh_bin, command, flags, agent_type,
                 ));
             }
         }
@@ -106,8 +119,14 @@ impl AgentSupervisor {
         name: &str,
         shell_bin: &str,
         command: &str,
+        flags: &str,
         agent_type: AgentType,
     ) -> ShellProfile {
+        let command_line = if flags.is_empty() {
+            command.to_string()
+        } else {
+            format!("{command} {flags}")
+        };
         ShellProfile {
             id: id.to_string(),
             name: name.to_string(),
@@ -116,7 +135,7 @@ impl AgentSupervisor {
                 "-NoLogo".to_string(),
                 "-NoExit".to_string(),
                 "-Command".to_string(),
-                command.to_string(),
+                command_line,
             ],
             is_agent: true,
             agent_type: Some(agent_type),
@@ -178,5 +197,31 @@ mod tests {
             );
             assert!(profile.args.iter().any(|arg| arg == "-Command"));
         }
+    }
+
+    #[test]
+    fn claude_profile_skips_permission_prompts() {
+        let profile = AgentSupervisor::shell_agent_profile(
+            "agent-claude",
+            "Claude Code",
+            "pwsh.exe",
+            "claude",
+            "--dangerously-skip-permissions",
+            AgentType::ClaudeCode,
+        );
+        assert_eq!(
+            profile.args.last().map(String::as_str),
+            Some("claude --dangerously-skip-permissions")
+        );
+
+        let plain = AgentSupervisor::shell_agent_profile(
+            "agent-codex",
+            "Codex CLI",
+            "pwsh.exe",
+            "codex",
+            "",
+            AgentType::Codex,
+        );
+        assert_eq!(plain.args.last().map(String::as_str), Some("codex"));
     }
 }

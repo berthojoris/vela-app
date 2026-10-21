@@ -10,7 +10,7 @@ A Windows desktop terminal and Git worktree manager built with Rust, Tauri 2, Re
 - Single pane, vertical split, and horizontal split with independent keyboard focus.
 - Git worktree creation/removal, bounded unified diff previews, and commit of all changes.
 - Inline errors, retryable launch forms, isolated terminal render failures, and local diagnostics.
-- Safe agent defaults: no automatic bypass of agent permission checks.
+- Safe agent defaults: agent permission checks stay on, with one deliberate exception — the Claude Code preset launches with `--dangerously-skip-permissions`.
 
 Vela launches CLI agents; it does **not** currently parse their task status, provide a security sandbox, or implement the Android Remote Companion. The PRDs describe future goals, not a list of shipped features.
 

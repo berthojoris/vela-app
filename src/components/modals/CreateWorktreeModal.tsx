@@ -150,7 +150,8 @@ export const CreateWorktreeModal: React.FC<{ isOpen: boolean; onClose: () => voi
               </select>
             </label>
             <p className="text-orca-muted">
-              Agents keep their normal permission checks. A worktree isolates Git changes, not access to your computer.
+              Agents keep their normal permission checks, except the Claude Code preset, which starts with its
+              permission prompts disabled. A worktree isolates Git changes, not access to your computer.
             </p>
           </fieldset>
           <footer className="flex justify-end gap-2">
