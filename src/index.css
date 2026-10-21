@@ -69,9 +69,21 @@
   background-color: #0c0c0e !important;
 }
 
-.xterm .xterm-scrollable-element > .scrollbar.vertical.invisible {
-  opacity: 1;
-  pointer-events: auto;
+/* xterm keeps its own overlay scrollbar: it reveals on hover/scroll and fades out
+   (800ms) once the pointer leaves. Hide the native viewport bar underneath so only
+   that slider is painted, and soften its hover colour change. Do not force
+   `.invisible` back to opacity 1 — that cancels the fade and shows an empty bar. */
+.xterm .xterm-viewport {
+  scrollbar-width: none;
+}
+
+.xterm .xterm-viewport::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.xterm .xterm-scrollable-element > .scrollbar > .slider {
+  transition: background-color 150ms linear;
 }
 
 .xterm-screen {
