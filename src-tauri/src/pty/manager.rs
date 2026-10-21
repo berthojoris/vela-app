@@ -497,6 +497,29 @@ fn terminate_tree(session: &ActiveSession) -> Result<(), String> {
         .map_err(|error| format!("Cannot terminate terminal: {error}"))
 }
 
+/// Startup script for plain PowerShell tabs. It must only use core cmdlets and .NET
+/// calls: see `configure_shell` for why module lookups are avoided.
+const POWERSHELL_INIT: &str = concat!(
+    "try { if (-not ${alias:oc} -and -not ${function:oc}) { function global:oc { opencode @args } } } catch {}; ",
+    "try { if (-not (Get-Module PSReadLine)) { & { ",
+    "$best = $null; $bestVersion = [version]'0.0'; ",
+    "$roots = if ($PSVersionTable.PSEdition -eq 'Core') { @([IO.Path]::Combine($PSHOME, 'Modules', 'PSReadLine')) } ",
+    "else { @([IO.Path]::Combine($env:ProgramFiles, 'WindowsPowerShell', 'Modules', 'PSReadLine'), [IO.Path]::Combine($PSHOME, 'Modules', 'PSReadLine')) }; ",
+    "foreach ($root in $roots) { if ([IO.Directory]::Exists($root)) { ",
+    "foreach ($file in [IO.Directory]::GetFiles($root, 'PSReadLine.psd1', [IO.SearchOption]::AllDirectories)) { ",
+    "$version = [version]'0.0'; [void][version]::TryParse([IO.Path]::GetFileName([IO.Path]::GetDirectoryName($file)), [ref]$version); ",
+    "if ($null -eq $best -or $version -gt $bestVersion) { $best = $file; $bestVersion = $version } } } }; ",
+    "if ($best) { Import-Module $best -Global -ErrorAction SilentlyContinue } ",
+    "else { Import-Module PSReadLine -Global -ErrorAction SilentlyContinue } } }; ",
+    "if (Get-Module PSReadLine) { ",
+    "Set-PSReadLineKeyHandler -Chord 'Shift+Enter' -Function AddLine -ErrorAction SilentlyContinue; ",
+    "Set-PSReadLineKeyHandler -Chord 'Ctrl+Enter' -Function AddLine -ErrorAction SilentlyContinue } } catch {}; ",
+    "$global:__VelaOriginalPrompt = $function:prompt; function global:prompt { ",
+    "try { if ($PWD.Provider.Name -eq 'FileSystem') { $u = [uri]($PWD.ProviderPath + [IO.Path]::DirectorySeparatorChar); ",
+    "[Console]::Write(([char]27) + ']7;' + $u.AbsoluteUri + ([char]7)) } } catch {} ; ",
+    "if ($global:__VelaOriginalPrompt) { & $global:__VelaOriginalPrompt } else { 'PS ' + $PWD + '> ' } }",
+);
+
 fn configure_shell(command: &mut CommandBuilder, shell: &str, args: &[String]) {
     let binary = shell
         .replace('\\', "/")
@@ -517,7 +540,12 @@ fn configure_shell(command: &mut CommandBuilder, shell: &str, args: &[String]) {
         command.arg("-Command");
         // XTermView sends Shift+Enter as a Win32 Shift+Enter key record. xterm sends
         // Ctrl+J as '\n', which ConPTY reports as Ctrl+Enter (InsertLineAbove).
-        command.arg("try { Set-Alias -Name oc -Value opencode -ErrorAction SilentlyContinue } catch {}; try { if (Get-Module -ListAvailable PSReadLine) { Import-Module PSReadLine -ErrorAction SilentlyContinue; Set-PSReadLineKeyHandler -Chord 'Shift+Enter' -Function AddLine -ErrorAction SilentlyContinue; Set-PSReadLineKeyHandler -Chord 'Ctrl+Enter' -Function AddLine -ErrorAction SilentlyContinue } } catch {}; $global:__VelaOriginalPrompt = $function:prompt; function global:prompt { try { if ($PWD.Provider.Name -eq 'FileSystem') { $u = [uri]($PWD.ProviderPath + [IO.Path]::DirectorySeparatorChar); [Console]::Write(([char]27) + ']7;' + $u.AbsoluteUri + ([char]7)) } } catch {} ; if ($global:__VelaOriginalPrompt) { & $global:__VelaOriginalPrompt } else { 'PS ' + $PWD + '> ' } }");
+        // Any by-name module lookup (`Get-Module -ListAvailable`, `Import-Module
+        // PSReadLine`, or autoloading a non-core cmdlet such as Set-Alias) probes every
+        // PSModulePath entry, and a Documents folder redirected to an unreachable share
+        // stalls startup for minutes. Load PSReadLine from its local install path using
+        // only core cmdlets and .NET; fall back to a by-name import only if it is absent.
+        command.arg(POWERSHELL_INIT);
     } else if matches!(binary.as_str(), "cmd" | "cmd.exe") {
         command.env(
             "PROMPT",
