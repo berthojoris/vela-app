@@ -4,6 +4,7 @@ import { NewTabDropdown } from './NewTabDropdown';
 import { TerminalIcon } from '../terminal/TerminalIcon';
 import { X, Columns2, Rows2, Square } from 'lucide-react';
 import { useNoticeStore } from '../../stores/useNoticeStore';
+import { useEditorStore } from '../../stores/useEditorStore';
 
 interface TabBarProps {
   onOpenTerminalModal: () => void;
@@ -40,6 +41,7 @@ export const TabBar: React.FC<TabBarProps> = ({ onOpenTerminalModal }) => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const key = e.key.toLowerCase();
       if (!e.ctrlKey || (key !== 't' && key !== 'w')) return;
+      if (key === 'w' && useEditorStore.getState().workspaceView === 'editor') return;
       // Capture before xterm consumes the event; never send these app shortcuts
       // to the PTY or let WebView/Edge close a tab while a modal is open.
       e.preventDefault();

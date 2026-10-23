@@ -6,6 +6,7 @@ pub mod agent;
 #[link(name = "vela_test_manifest", kind = "static", modifiers = "-bundle")]
 extern "C" {}
 mod diagnostics;
+mod files;
 pub mod git;
 pub mod models;
 pub mod process;
@@ -14,6 +15,7 @@ pub mod pty;
 use agent::supervisor::AgentSupervisor;
 use git::worktree::GitManager;
 use models::{AgentType, FileDiff, GitWorktree, ShellProfile, TerminalSession, WorktreeChanges};
+use models::{DirectoryListing, TextFile};
 use pty::manager::PtyManager;
 use tauri::{AppHandle, Manager, State, Window};
 
@@ -134,6 +136,32 @@ async fn find_git_repo(path: Option<String>) -> Result<Option<String>, String> {
     tokio::task::spawn_blocking(move || GitManager::find_repo_root(path.as_deref()))
         .await
         .map_err(|e| format!("Task execution error: {}", e))?
+}
+
+#[tauri::command]
+async fn list_directory(root: String, path: String) -> Result<DirectoryListing, String> {
+    tokio::task::spawn_blocking(move || files::list(&root, &path))
+        .await
+        .map_err(|e| format!("File listing worker failed: {e}"))?
+}
+
+#[tauri::command]
+async fn read_text_file(root: String, path: String) -> Result<TextFile, String> {
+    tokio::task::spawn_blocking(move || files::read(&root, &path))
+        .await
+        .map_err(|e| format!("File reading worker failed: {e}"))?
+}
+
+#[tauri::command]
+async fn save_text_file(
+    root: String,
+    path: String,
+    content: String,
+    expected_revision: String,
+) -> Result<TextFile, String> {
+    tokio::task::spawn_blocking(move || files::save(&root, &path, &content, &expected_revision))
+        .await
+        .map_err(|e| format!("File saving worker failed: {e}"))?
 }
 
 #[tauri::command]
@@ -366,6 +394,9 @@ pub fn run() {
             kill_terminal,
             start_terminal_output,
             find_git_repo,
+            list_directory,
+            read_text_file,
+            save_text_file,
             list_worktrees,
             create_worktree,
             remove_worktree,

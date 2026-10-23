@@ -9,6 +9,7 @@ import { useTerminalStore } from './stores/useTerminalStore';
 const ipc = vi.hoisted(() => ({
   getShellProfiles: vi.fn(async () => []),
   onAppError: vi.fn(async () => () => {}),
+  onWindowCloseRequested: vi.fn(async () => () => {}),
   listWorktrees: vi.fn(async () => []),
 }));
 vi.mock('./lib/tauriIpc', () => ({ tauriIpc: ipc }));

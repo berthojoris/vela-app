@@ -2,13 +2,38 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { AgentType, FileDiff, GitWorktree, ShellProfile, TerminalSession, WorktreeChanges } from '../types';
+import {
+  AgentType,
+  DirectoryListing,
+  TextFile,
+  FileDiff,
+  GitWorktree,
+  ShellProfile,
+  TerminalSession,
+  WorktreeChanges,
+} from '../types';
 
 export const isTauri = () => {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 };
 
 export const tauriIpc = {
+  async listDirectory(root: string, path: string): Promise<DirectoryListing> {
+    if (!isTauri()) return { entries: [], truncated: false };
+    return invoke<DirectoryListing>('list_directory', { root, path });
+  },
+  async readTextFile(root: string, path: string): Promise<TextFile> {
+    if (!isTauri()) throw new Error('File editing requires the Vela desktop app.');
+    return invoke<TextFile>('read_text_file', { root, path });
+  },
+  async saveTextFile(root: string, path: string, content: string, expectedRevision: string): Promise<TextFile> {
+    if (!isTauri()) throw new Error('Saving requires the Vela desktop app.');
+    return invoke<TextFile>('save_text_file', { root, path, content, expectedRevision });
+  },
+  onWindowCloseRequested(callback: (event: { preventDefault: () => void }) => void): Promise<UnlistenFn> {
+    if (!isTauri()) return Promise.resolve(() => {});
+    return getCurrentWindow().onCloseRequested(callback);
+  },
   async reportError(message: string): Promise<void> {
     if (!isTauri()) return;
     await invoke('report_frontend_error', { message: message.slice(0, 8000) });

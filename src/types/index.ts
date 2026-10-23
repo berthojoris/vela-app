@@ -58,3 +58,21 @@ export interface ShellProfile {
   is_agent: boolean;
   agent_type: AgentType | null;
 }
+
+export interface FileEntry {
+  name: string;
+  path: string;
+  is_dir: boolean;
+}
+
+export interface DirectoryListing {
+  entries: FileEntry[];
+  truncated: boolean;
+}
+
+export interface TextFile {
+  content: string;
+  revision: string;
+  line_ending: string;
+  has_bom: boolean;
+}

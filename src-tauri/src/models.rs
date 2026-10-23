@@ -1,5 +1,26 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct FileEntry {
+    pub name: String,
+    pub path: String,
+    pub is_dir: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DirectoryListing {
+    pub entries: Vec<FileEntry>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TextFile {
+    pub content: String,
+    pub revision: String,
+    pub line_ending: String,
+    pub has_bom: bool,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentType {

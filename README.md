@@ -9,6 +9,8 @@ A Windows desktop terminal and Git worktree manager built with Rust, Tauri 2, Re
 - Instant startup: the window is revealed as soon as the React workspace mounts, with no splash delay.
 - Single pane, vertical split, and horizontal split with independent keyboard focus.
 - Git worktree creation/removal, bounded unified diff previews, and commit of all changes.
+- Switchable Git / Files sidebar with a lazy-loading folder tree and VS Code-style file icons.
+- Tabbed code editor with syntax highlighting, line numbers, search, undo/redo, and Ctrl+S saving.
 - Inline errors, retryable launch forms, isolated terminal render failures, and local diagnostics.
 - Safe agent defaults: agent permission checks stay on, with one deliberate exception — the Claude Code preset launches with `--dangerously-skip-permissions`.
 
@@ -66,6 +68,16 @@ The Windows CI workflow runs frontend lint/format checks/tests/build, Rust fmt/c
 
 ## Safety and recovery
 
+### File Explorer and editor
+
+Click **Open Files** (above **Open Dir**) to browse the active terminal directory, or choose a folder when there is no active directory. Expand folders with a single click; double-click a file (or press Enter) to edit it on the right. **Git / Files** switches the sidebar; **Terminal / Editor** switches the workspace without stopping terminals or discarding edits. **Open Dir** still opens Windows File Explorer.
+
+The editor supports UTF-8 text files up to 2 MiB and 20 open tabs. LF/CRLF and UTF-8 BOM are preserved; binary files, other encodings, and mixed/legacy line endings are refused. Folder listings are capped at 5,000 entries; Git metadata and links outside the Explorer root are excluded. Filesystem permissions still apply.
+
+Save with **Ctrl+S** or the Save button. Unsaved tabs show a dot, and closing a dirty tab or the native window asks whether to save, discard, or cancel. If the disk content changed since opening/saving, Vela refuses to overwrite it and keeps your edits. Copy your edits before discarding and reopening to resolve a conflict. Files are replaced through a temporary sibling file rather than truncated in place. Open editor tabs are not restored after restarting Vela. The browser-only preview cannot read or save real files.
+
+### Git and terminal operations
+
 - A worktree separates Git files, **not** filesystem permissions. Agents run with your user privileges and their normal permission prompts.
 - Commit includes every tracked and unignored untracked change via `git add -A`. There is no file selection or automatic push.
 - Failed commits may leave changes staged. Timed-out write operations must be checked with `git status` / `git log` before retrying. Vela never automatically retries a Git write.
@@ -97,7 +109,9 @@ PowerShell, CMD, and standard Git Bash profiles report prompt directories throug
 | Shortcut | Action |
 | --- | --- |
 | Ctrl+T | Open terminal launch dialog |
-| Ctrl+W | Close focused terminal tab |
+| Ctrl+W | Close focused terminal tab, or active file in Editor |
+| Ctrl+S | Save the active file in Editor |
+| Ctrl+F in editor | Find text in the active file |
 | Double click tab | Rename tab |
 | Double click titlebar | Maximize / restore |
 | Escape | Close a dialog when no operation is pending |

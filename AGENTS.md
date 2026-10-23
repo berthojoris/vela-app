@@ -117,6 +117,15 @@ Report the installer's absolute path, size, SHA256, the version, and the upgrade
 - `src-tauri/tauri.conf.json` — the app/window config; keeps `bundle.active: false` on purpose. `src-tauri/tauri.bundle.json` is the bundling **override** used only for installer builds — don't merge the two.
 - Frontend: `src/App.tsx` → `src/components/*` (layout, tabs, terminal, sidebar, diff, modals); state in `src/stores/*` (Zustand); IPC wrappers in `src/lib/tauriIpc.ts`; mirrored types in `src/types/index.ts`.
 
+## Code intelligence (CBM MCP, optional)
+
+`cbm` is an **optional local MCP server** (codebase-memory-mcp) that exposes a code graph of this repository. Use it only when the `cbm` tools are present in the session; otherwise fall back to `grep` and direct file reads. Nothing in this project depends on it.
+
+- Prefer graph tools for structure: `search_graph` (find symbols), `trace_path` (callers/callees), `get_architecture` (layers, boundaries, hotspots), `detect_changes` (impact of the current diff), `get_file_outline`, `get_code_snippet`.
+- Use `search_code` / `grep` for literals (string constants, config keys, error text) and for any path `check_index_coverage` reports as partial or skipped.
+- The project name is derived from the session's working directory, not hardcoded. Check `index_status` before trusting results; run `index_repository` when the index is missing or stale. Each worktree is a separate project index.
+- The graph is **static analysis, not runtime truth**. Treat it as a navigation aid: verify against source before asserting behavior, and never treat an empty result as proof that a symbol, caller, or file does not exist.
+
 ## Strict Rust + Tauri 2 rules
 
 1. **Adding an IPC command is a 3-file change**: define `#[tauri::command] fn` in `lib.rs`, add it to `generate_handler!`, then add a typed wrapper in `src/lib/tauriIpc.ts` (and a type in `src/types/index.ts` if it crosses the boundary). Skipping the wrapper leaves the command unreachable from the UI.

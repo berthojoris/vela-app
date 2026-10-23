@@ -9,9 +9,14 @@ import { Terminal, Plus, Bot, GitBranch } from 'lucide-react';
 interface TerminalGridProps {
   onOpenCreateWorktree: () => void;
   onOpenTerminalModal: (initialProfileId?: string) => void;
+  isWorkspaceActive?: boolean;
 }
 
-export const TerminalGrid: React.FC<TerminalGridProps> = ({ onOpenCreateWorktree, onOpenTerminalModal }) => {
+export const TerminalGrid: React.FC<TerminalGridProps> = ({
+  onOpenCreateWorktree,
+  onOpenTerminalModal,
+  isWorkspaceActive = true,
+}) => {
   const { sessions, activeSessionId, primarySessionId, secondarySessionId, splitMode, setActiveSession } =
     useTerminalStore();
 
@@ -122,7 +127,7 @@ export const TerminalGrid: React.FC<TerminalGridProps> = ({ onOpenCreateWorktree
                   </div>
                 }
               >
-                <XTermView sessionId={session.id} isActive={isActive} />
+                <XTermView sessionId={session.id} isActive={isWorkspaceActive && isActive} />
               </Suspense>
             </ErrorBoundary>
           </div>

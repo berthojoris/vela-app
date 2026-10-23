@@ -13,6 +13,9 @@ import { tauriIpc } from './lib/tauriIpc';
 import { useTerminalStore } from './stores/useTerminalStore';
 import { useWorktreeStore } from './stores/useWorktreeStore';
 import { useDiffStore } from './stores/useDiffStore';
+import { EditorWorkspace } from './components/editor/EditorWorkspace';
+import { useEditorStore } from './stores/useEditorStore';
+import { Files, Terminal } from 'lucide-react';
 
 export const App: React.FC = () => {
   const [isCreateWorktreeOpen, setIsCreateWorktreeOpen] = useState(false);
@@ -21,9 +24,13 @@ export const App: React.FC = () => {
   const { fetchProfiles, sessions, activeSessionId } = useTerminalStore();
   const { initRepo, syncWithSession, refreshWorktrees, autoGitStatus } = useWorktreeStore();
   const isDiffOpen = useDiffStore((state) => state.isOpen);
+  const workspaceView = useEditorStore((state) => state.workspaceView);
+  const editorDocumentCount = useEditorStore((state) => state.documents.length);
+  const setWorkspaceView = useEditorStore((state) => state.setWorkspaceView);
   const activeSessionCwd = sessions.find((session) => session.id === activeSessionId)?.cwd;
 
   const handleOpenTerminalModal = (profileId?: string) => {
+    setWorkspaceView('terminal');
     setModalInitialProfileId(profileId);
     setIsOpenTerminalModalOpen(true);
   };
@@ -103,15 +110,41 @@ export const App: React.FC = () => {
 
         {/* Right: Terminal Multiplexer Area */}
         <div className="flex-1 flex flex-col overflow-hidden bg-orca-darkest">
-          {/* Tab Navigation Bar with "+" Button & Split Toggles */}
-          <TabBar onOpenTerminalModal={() => handleOpenTerminalModal()} />
+          <div
+            className="h-8 shrink-0 flex items-center gap-1 px-2 border-b border-orca-border bg-orca-darker text-[11px]"
+            role="group"
+            aria-label="Workspace view"
+          >
+            <button
+              aria-pressed={workspaceView === 'terminal'}
+              onClick={() => setWorkspaceView('terminal')}
+              className={`h-6 px-2 rounded flex items-center gap-1.5 ${workspaceView === 'terminal' ? 'bg-orca-hover text-white' : 'text-orca-muted hover:text-white'}`}
+            >
+              <Terminal className="w-3 h-3" />
+              Terminal
+            </button>
+            <button
+              aria-pressed={workspaceView === 'editor'}
+              onClick={() => setWorkspaceView('editor')}
+              className={`h-6 px-2 rounded flex items-center gap-1.5 ${workspaceView === 'editor' ? 'bg-orca-hover text-white' : 'text-orca-muted hover:text-white'}`}
+            >
+              <Files className="w-3 h-3" />
+              Editor{editorDocumentCount > 0 && <span className="text-orca-muted">{editorDocumentCount}</span>}
+            </button>
+          </div>
+          <EditorWorkspace />
+          <div className={workspaceView === 'terminal' ? 'flex flex-col flex-1 min-h-0' : 'hidden'}>
+            {/* Tab Navigation Bar with "+" Button & Split Toggles */}
+            <TabBar onOpenTerminalModal={() => handleOpenTerminalModal()} />
 
-          {/* Active Terminal Panes / Split Grid */}
-          <div className="flex-1 relative overflow-hidden">
-            <TerminalGrid
-              onOpenCreateWorktree={() => setIsCreateWorktreeOpen(true)}
-              onOpenTerminalModal={handleOpenTerminalModal}
-            />
+            {/* Active Terminal Panes / Split Grid */}
+            <div className="flex-1 relative overflow-hidden">
+              <TerminalGrid
+                onOpenCreateWorktree={() => setIsCreateWorktreeOpen(true)}
+                onOpenTerminalModal={handleOpenTerminalModal}
+                isWorkspaceActive={workspaceView === 'terminal'}
+              />
+            </div>
           </div>
         </div>
       </div>
