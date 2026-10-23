@@ -26,6 +26,11 @@ it('deduplicates file opens and keeps documents when changing workspace', async 
   expect(useEditorStore.getState().documents).toHaveLength(1);
 });
 
+it('never switches to the editor while no file is open', () => {
+  useEditorStore.getState().setWorkspaceView('editor');
+  expect(useEditorStore.getState().workspaceView).toBe('terminal');
+});
+
 it('does not let a late file read steal a newer selection or explicit workspace switch', async () => {
   let finish!: (value: TextFile) => void;
   ipc.readTextFile.mockImplementationOnce(

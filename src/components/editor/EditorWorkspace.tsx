@@ -12,7 +12,6 @@ export function EditorWorkspace() {
   const [closeTarget, setCloseTarget] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [closeError, setCloseError] = useState<string | null>(null);
-  const allowClose = useRef(false);
   const busyRef = useRef(false);
   const active = documents.find((doc) => doc.id === activeDocumentId);
   const shown = workspaceView === 'editor';
@@ -48,17 +47,33 @@ export function EditorWorkspace() {
         event.returnValue = '';
       }
     };
-    const interceptClose = (event: { preventDefault: () => void }) => {
-      if (!allowClose.current && useEditorStore.getState().documents.some((doc) => isDirty(doc) || doc.saving)) {
-        event.preventDefault();
+    const hasUnsaved = () => useEditorStore.getState().documents.some((doc) => isDirty(doc) || doc.saving);
+    // The backend blocks window close while this flag is set and tells us to show the dialog.
+    let reportedUnsaved: boolean | undefined;
+    const syncUnsaved = () => {
+      const unsaved = hasUnsaved();
+      if (unsaved === reportedUnsaved) return;
+      reportedUnsaved = unsaved;
+      tauriIpc.setUnsavedEditorChanges(unsaved).catch((error) => {
+        reportedUnsaved = undefined;
+        useNoticeStore.getState().report('Unable to protect unsaved files on window close', error);
+      });
+    };
+    const onCloseBlocked = () => {
+      if (hasUnsaved()) {
         setCloseTarget('window');
         setCloseError(null);
+      } else {
+        // Files were saved after the backend blocked the close; nothing left to confirm.
+        tauriIpc.closeWindow(true).catch((error) => useNoticeStore.getState().report('Unable to close window', error));
       }
     };
+    syncUnsaved();
+    const unsubscribe = useEditorStore.subscribe(syncUnsaved);
     let disposed = false;
     let unlisten: (() => void) | undefined;
     void tauriIpc
-      .onWindowCloseRequested(interceptClose)
+      .onCloseBlockedByUnsavedFiles(onCloseBlocked)
       .then((cleanup) => {
         if (disposed) cleanup();
         else unlisten = cleanup;
@@ -69,6 +84,9 @@ export function EditorWorkspace() {
     return () => {
       disposed = true;
       unlisten?.();
+      unsubscribe();
+      // Without this component nobody can answer a blocked close, so release the guard.
+      void tauriIpc.setUnsavedEditorChanges(false).catch(() => {});
       window.removeEventListener('keydown', onKey, true);
       window.removeEventListener('beforeunload', beforeUnload);
     };
@@ -106,13 +124,7 @@ export function EditorWorkspace() {
         }
       }
       if (closeTarget === 'window') {
-        allowClose.current = true;
-        try {
-          await tauriIpc.closeWindow();
-        } catch (error) {
-          allowClose.current = false;
-          throw error;
-        }
+        await tauriIpc.closeWindow(true);
       } else {
         closeFile(closeTarget, discard);
       }

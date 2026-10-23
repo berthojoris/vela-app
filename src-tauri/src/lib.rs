@@ -17,7 +17,39 @@ use git::worktree::GitManager;
 use models::{AgentType, FileDiff, GitWorktree, ShellProfile, TerminalSession, WorktreeChanges};
 use models::{DirectoryListing, TextFile};
 use pty::manager::PtyManager;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{AppHandle, Manager, State, Window};
+
+const GIT_WRITE_CLOSE_MESSAGE: &str =
+    "A Git write is still running. Wait for it to finish before closing Vela.";
+
+/// Window-close gate owned by the backend. The frontend reports unsaved editor
+/// files here instead of registering a JS `onCloseRequested` listener: that
+/// listener makes Tauri defer every close to `window.destroy()` from JS, which
+/// needs an extra ACL permission and would bypass the Git-write guard below.
+#[derive(Default)]
+struct CloseGuard {
+    unsaved_editor_changes: AtomicBool,
+    /// One-shot pass for the next close request after the user saved or
+    /// discarded their files in the unsaved-changes dialog.
+    unsaved_changes_confirmed: AtomicBool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum CloseBlock {
+    GitWrite,
+    UnsavedFiles,
+}
+
+fn close_block(git_writing: bool, unsaved: bool, confirmed: bool) -> Option<CloseBlock> {
+    if git_writing {
+        Some(CloseBlock::GitWrite)
+    } else if unsaved && !confirmed {
+        Some(CloseBlock::UnsavedFiles)
+    } else {
+        None
+    }
+}
 
 // The parameter list mirrors the IPC wire contract; the frontend sends each field.
 #[allow(clippy::too_many_arguments)]
@@ -259,13 +291,31 @@ fn minimize_window(window: Window) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn close_window(window: Window) -> Result<(), String> {
+fn set_unsaved_editor_changes(guard: State<'_, CloseGuard>, unsaved: bool) {
+    guard
+        .unsaved_editor_changes
+        .store(unsaved, Ordering::Release);
+}
+
+#[tauri::command]
+fn close_window(
+    window: Window,
+    guard: State<'_, CloseGuard>,
+    unsaved_changes_confirmed: Option<bool>,
+) -> Result<(), String> {
     if GitManager::has_active_writes() {
-        return Err(
-            "A Git write is still running. Wait for it to finish before closing Vela.".into(),
-        );
+        return Err(GIT_WRITE_CLOSE_MESSAGE.into());
     }
-    window.close().map_err(|e| e.to_string())
+    let confirmed = unsaved_changes_confirmed.unwrap_or(false);
+    guard
+        .unsaved_changes_confirmed
+        .store(confirmed, Ordering::Release);
+    window.close().map_err(|e| {
+        guard
+            .unsaved_changes_confirmed
+            .store(false, Ordering::Release);
+        e.to_string()
+    })
 }
 
 #[tauri::command]
@@ -359,15 +409,26 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(pty_manager)
+        .manage(CloseGuard::default())
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                if GitManager::has_active_writes() {
-                    api.prevent_close();
-                    use tauri::Emitter;
-                    let _ = window.emit(
-                        "app-error",
-                        "A Git write is still running. Wait for it to finish before closing Vela.",
-                    );
+                use tauri::Emitter;
+                let guard = window.state::<CloseGuard>();
+                let block = close_block(
+                    GitManager::has_active_writes(),
+                    guard.unsaved_editor_changes.load(Ordering::Acquire),
+                    guard.unsaved_changes_confirmed.swap(false, Ordering::AcqRel),
+                );
+                match block {
+                    Some(CloseBlock::GitWrite) => {
+                        api.prevent_close();
+                        let _ = window.emit("app-error", GIT_WRITE_CLOSE_MESSAGE);
+                    }
+                    Some(CloseBlock::UnsavedFiles) => {
+                        api.prevent_close();
+                        let _ = window.emit("close-blocked-unsaved-files", ());
+                    }
+                    None => {}
                 }
             }
         })
@@ -408,6 +469,7 @@ pub fn run() {
             get_shell_profiles,
             toggle_maximize,
             minimize_window,
+            set_unsaved_editor_changes,
             close_window,
             is_window_maximized,
             show_window,
@@ -476,6 +538,18 @@ mod tests {
             !formatted.ends_with('\\') || formatted.len() <= 3,
             "Non-root path should not end with backslash: {formatted}"
         );
+    }
+
+    #[test]
+    fn close_block_prefers_git_writes_and_honors_confirmed_unsaved_files() {
+        assert_eq!(close_block(false, false, false), None);
+        assert_eq!(
+            close_block(false, true, false),
+            Some(CloseBlock::UnsavedFiles)
+        );
+        assert_eq!(close_block(false, true, true), None);
+        assert_eq!(close_block(true, false, false), Some(CloseBlock::GitWrite));
+        assert_eq!(close_block(true, true, true), Some(CloseBlock::GitWrite));
     }
 
     #[test]

@@ -5,11 +5,11 @@ import { App } from './App';
 import { useWorktreeStore } from './stores/useWorktreeStore';
 import { useDiffStore } from './stores/useDiffStore';
 import { useTerminalStore } from './stores/useTerminalStore';
+import { useEditorStore } from './stores/useEditorStore';
 
 const ipc = vi.hoisted(() => ({
   getShellProfiles: vi.fn(async () => []),
   onAppError: vi.fn(async () => () => {}),
-  onWindowCloseRequested: vi.fn(async () => () => {}),
   listWorktrees: vi.fn(async () => []),
 }));
 vi.mock('./lib/tauriIpc', () => ({ tauriIpc: ipc }));
@@ -21,7 +21,38 @@ vi.mock('./components/sidebar/WorktreeSidebar', () => ({ WorktreeSidebar: () => 
 vi.mock('./components/diff/DiffViewerModal', () => ({ DiffViewerModal: () => null }));
 vi.mock('./components/modals/CreateWorktreeModal', () => ({ CreateWorktreeModal: () => null }));
 vi.mock('./components/modals/OpenTerminalModal', () => ({ OpenTerminalModal: () => null }));
+vi.mock('./components/editor/EditorWorkspace', () => ({ EditorWorkspace: () => null }));
 afterEach(() => vi.useRealTimers());
+
+it('shows the Editor tab only while files are open and returns to Terminal after the last close', async () => {
+  useWorktreeStore.setState(useWorktreeStore.getInitialState());
+  useTerminalStore.setState(useTerminalStore.getInitialState());
+  useDiffStore.setState(useDiffStore.getInitialState());
+  useEditorStore.setState(useEditorStore.getInitialState());
+  const { queryByRole } = render(<App />);
+  expect(queryByRole('button', { name: /^Editor/ })).toBeNull();
+  const doc = {
+    id: 'c:/repo/a.ts',
+    root: 'C:/repo',
+    path: 'a.ts',
+    content: 'x',
+    savedContent: 'x',
+    revision: 'v1',
+    line_ending: 'LF' as const,
+    has_bom: false,
+    saving: false,
+    error: null,
+  };
+  await act(async () =>
+    useEditorStore.setState({ documents: [doc], activeDocumentId: doc.id, workspaceView: 'editor' })
+  );
+  expect(queryByRole('button', { name: /^Editor/ })).not.toBeNull();
+  await act(async () => {
+    useEditorStore.getState().closeFile(doc.id);
+  });
+  expect(queryByRole('button', { name: /^Editor/ })).toBeNull();
+  expect(useEditorStore.getState().workspaceView).toBe('terminal');
+});
 
 it('pauses timed and focus refreshes while Diff is open and resumes after closing', async () => {
   vi.useFakeTimers();

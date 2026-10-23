@@ -39,6 +39,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   workspaceView: 'terminal',
   opening: [],
   setWorkspaceView: (workspaceView) => {
+    // An empty editor has nothing to show; stay on the terminal instead.
+    if (workspaceView === 'editor' && get().documents.length === 0) return;
     ++openSequence;
     set({ workspaceView });
   },

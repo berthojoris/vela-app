@@ -30,9 +30,16 @@ export const tauriIpc = {
     if (!isTauri()) throw new Error('Saving requires the Vela desktop app.');
     return invoke<TextFile>('save_text_file', { root, path, content, expectedRevision });
   },
-  onWindowCloseRequested(callback: (event: { preventDefault: () => void }) => void): Promise<UnlistenFn> {
+  // Close gating lives in Rust. Do not use getCurrentWindow().onCloseRequested: it makes
+  // every close finish with a JS window.destroy() (needs core:window:allow-destroy) and
+  // skips the backend's Git-write guard.
+  async setUnsavedEditorChanges(unsaved: boolean): Promise<void> {
+    if (!isTauri()) return;
+    await invoke('set_unsaved_editor_changes', { unsaved });
+  },
+  onCloseBlockedByUnsavedFiles(callback: () => void): Promise<UnlistenFn> {
     if (!isTauri()) return Promise.resolve(() => {});
-    return getCurrentWindow().onCloseRequested(callback);
+    return listen('close-blocked-unsaved-files', () => callback());
   },
   async reportError(message: string): Promise<void> {
     if (!isTauri()) return;
@@ -219,9 +226,9 @@ export const tauriIpc = {
     await invoke('minimize_window');
   },
 
-  async closeWindow(): Promise<void> {
+  async closeWindow(unsavedChangesConfirmed = false): Promise<void> {
     if (!isTauri()) return;
-    await invoke('close_window');
+    await invoke('close_window', { unsavedChangesConfirmed });
   },
 
   async isWindowMaximized(): Promise<boolean> {

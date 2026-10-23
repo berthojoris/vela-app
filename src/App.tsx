@@ -123,14 +123,17 @@ export const App: React.FC = () => {
               <Terminal className="w-3 h-3" />
               Terminal
             </button>
-            <button
-              aria-pressed={workspaceView === 'editor'}
-              onClick={() => setWorkspaceView('editor')}
-              className={`h-6 px-2 rounded flex items-center gap-1.5 ${workspaceView === 'editor' ? 'bg-orca-hover text-white' : 'text-orca-muted hover:text-white'}`}
-            >
-              <Files className="w-3 h-3" />
-              Editor{editorDocumentCount > 0 && <span className="text-orca-muted">{editorDocumentCount}</span>}
-            </button>
+            {/* The Editor tab only exists while at least one file is open */}
+            {editorDocumentCount > 0 && (
+              <button
+                aria-pressed={workspaceView === 'editor'}
+                onClick={() => setWorkspaceView('editor')}
+                className={`h-6 px-2 rounded flex items-center gap-1.5 ${workspaceView === 'editor' ? 'bg-orca-hover text-white' : 'text-orca-muted hover:text-white'}`}
+              >
+                <Files className="w-3 h-3" />
+                Editor<span className="text-orca-muted">{editorDocumentCount}</span>
+              </button>
+            )}
           </div>
           <EditorWorkspace />
           <div className={workspaceView === 'terminal' ? 'flex flex-col flex-1 min-h-0' : 'hidden'}>

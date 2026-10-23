@@ -6,7 +6,8 @@ import { useEditorStore } from '../../stores/useEditorStore';
 const ipc = vi.hoisted(() => ({
   readTextFile: vi.fn(),
   saveTextFile: vi.fn(),
-  onWindowCloseRequested: vi.fn(),
+  setUnsavedEditorChanges: vi.fn(async () => {}),
+  onCloseBlockedByUnsavedFiles: vi.fn(),
   closeWindow: vi.fn(async () => {}),
 }));
 vi.mock('../../lib/tauriIpc', () => ({ tauriIpc: ipc }));
@@ -28,7 +29,8 @@ beforeEach(async () => {
   ipc.saveTextFile
     .mockReset()
     .mockResolvedValue({ content: 'changed', revision: 'v2', line_ending: 'LF', has_bom: false });
-  ipc.onWindowCloseRequested.mockReset().mockResolvedValue(() => {});
+  ipc.setUnsavedEditorChanges.mockClear();
+  ipc.onCloseBlockedByUnsavedFiles.mockReset().mockResolvedValue(() => {});
   ipc.closeWindow.mockClear();
   await useEditorStore.getState().openFile('C:/repo', 'a.ts');
 });
@@ -58,12 +60,34 @@ it('guards Ctrl+W and discards only after confirmation', async () => {
   await waitFor(() => expect(useEditorStore.getState().documents).toHaveLength(0));
 });
 
-it('prevents native window close until files are saved, including failed-save retry', async () => {
+it('reports unsaved files to the backend close guard and releases it once saved', async () => {
+  const { unmount } = render(<EditorWorkspace />);
+  expect(ipc.setUnsavedEditorChanges).toHaveBeenLastCalledWith(false);
+  fireEvent.change(await screen.findByLabelText('Code'), { target: { value: 'dirty' } });
+  expect(ipc.setUnsavedEditorChanges).toHaveBeenLastCalledWith(true);
+  const calls = ipc.setUnsavedEditorChanges.mock.calls.length;
+  fireEvent.change(screen.getByLabelText('Code'), { target: { value: 'dirtier' } });
+  expect(ipc.setUnsavedEditorChanges).toHaveBeenCalledTimes(calls);
+  fireEvent.keyDown(window, { key: 's', ctrlKey: true });
+  await waitFor(() => expect(ipc.setUnsavedEditorChanges).toHaveBeenLastCalledWith(false));
+  fireEvent.change(screen.getByLabelText('Code'), { target: { value: 'dirty again' } });
+  unmount();
+  expect(ipc.setUnsavedEditorChanges).toHaveBeenLastCalledWith(false);
+});
+
+it('closes immediately when the backend blocked a close that is no longer dirty', async () => {
+  render(<EditorWorkspace />);
+  await screen.findByLabelText('Code');
+  act(() => ipc.onCloseBlockedByUnsavedFiles.mock.calls[0][0]());
+  expect(screen.queryByRole('alertdialog')).toBeNull();
+  await waitFor(() => expect(ipc.closeWindow).toHaveBeenCalledWith(true));
+});
+
+it('asks before a backend-blocked window close until files are saved, including failed-save retry', async () => {
   render(<EditorWorkspace />);
   fireEvent.change(await screen.findByLabelText('Code'), { target: { value: 'dirty' } });
-  const preventDefault = vi.fn();
-  act(() => ipc.onWindowCloseRequested.mock.calls[0][0]({ preventDefault }));
-  expect(preventDefault).toHaveBeenCalled();
+  act(() => ipc.onCloseBlockedByUnsavedFiles.mock.calls[0][0]());
+  expect(screen.getByRole('alertdialog')).toBeTruthy();
   ipc.saveTextFile.mockRejectedValueOnce(new Error('Disk conflict'));
   fireEvent.click(screen.getByRole('button', { name: 'Save' }));
   await waitFor(() =>
@@ -73,4 +97,5 @@ it('prevents native window close until files are saved, including failed-save re
   expect(useEditorStore.getState().documents[0].content).toBe('dirty');
   fireEvent.click(screen.getByRole('button', { name: 'Save' }));
   await waitFor(() => expect(ipc.closeWindow).toHaveBeenCalledTimes(1));
+  expect(ipc.closeWindow).toHaveBeenCalledWith(true);
 });
