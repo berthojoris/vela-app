@@ -1,6 +1,6 @@
 [package]
 name = "vela"
-version = "0.3.0"
+version = "0.3.1"
 description = "Vela: Pulsar-speed, ultra-lightweight Agent Development Environment & Worktree Terminal Manager"
 authors = ["Vela Team"]
 edition = "2021"
