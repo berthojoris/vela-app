@@ -6,7 +6,7 @@ import { useTerminalStore } from '../../stores/useTerminalStore';
 import { useWorktreeStore } from '../../stores/useWorktreeStore';
 import { useNoticeStore } from '../../stores/useNoticeStore';
 import { ShellProfile } from '../../types';
-import { formatTabTitle } from '../../lib/shellIntegration';
+import { formatTabTitle, hostShellLabel } from '../../lib/shellIntegration';
 
 interface NewTabDropdownProps {
   onOpenTerminalModal: () => void;
@@ -145,6 +145,7 @@ export const NewTabDropdown: React.FC<NewTabDropdownProps> = ({ onOpenTerminalMo
                 <button
                   key={p.id}
                   onClick={() => handleSelectProfile(p)}
+                  title={`${p.name} runs inside ${hostShellLabel(p.executable)}`}
                   className="w-full text-left px-3 py-1.5 flex items-center gap-2 hover:bg-orca-hover hover:text-white text-orca-text transition-colors"
                 >
                   <TerminalIcon

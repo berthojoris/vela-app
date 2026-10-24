@@ -36,6 +36,23 @@ export function getFriendlyShellName(name: string): string {
   return name;
 }
 
+/**
+ * Names the shell that will actually host a session, from its executable.
+ *
+ * Agent profiles launch their CLI inside a host shell, so the agent's
+ * `executable` is the host, not the agent binary. Showing the host makes it
+ * clear that e.g. Droid CLI runs inside Git Bash.
+ */
+export function hostShellLabel(executable: string): string {
+  const base = (executable || '').replace(/\\/g, '/').split('/').pop() || executable || 'shell';
+  if (/^bash(\.exe)?$/i.test(base)) return 'Git Bash';
+  if (/^pwsh(\.exe)?$/i.test(base)) return 'PowerShell 7';
+  if (/^powershell(\.exe)?$/i.test(base)) return 'Windows PowerShell';
+  if (/^cmd(\.exe)?$/i.test(base)) return 'Command Prompt';
+  if (/^wsl(\.exe)?$/i.test(base)) return 'WSL';
+  return base;
+}
+
 /** Formats a consistent tab title: shell name with optional branch/folder context. */
 export function formatTabTitle(profileName: string, branchOrFolder?: string | null): string {
   const shell = getFriendlyShellName(profileName);

@@ -13,6 +13,7 @@ A Windows desktop terminal and Git worktree manager built with Rust, Tauri 2, Re
 - Tabbed code editor with syntax highlighting, line numbers, search, undo/redo, and Ctrl+S saving.
 - Inline errors, retryable launch forms, isolated terminal render failures, and local diagnostics.
 - Safe agent defaults: agent permission checks stay on, with one deliberate exception — the Claude Code preset launches with `--dangerously-skip-permissions`.
+- Each agent preset names the shell that hosts it. Droid CLI runs inside Git Bash, so the tools it drives use POSIX shell semantics instead of PowerShell; the other agents run inside Windows PowerShell. The launch dialog shows the host shell for the selected preset.
 
 Vela launches CLI agents; it does **not** currently parse their task status, provide a security sandbox, or implement the Android Remote Companion. The PRDs describe future goals, not a list of shipped features.
 
@@ -102,7 +103,7 @@ RAM, cold-start, and FPS numbers in earlier PRDs are **targets, not verified ben
 
 ## Directory tracking
 
-PowerShell, CMD, and standard Git Bash profiles report prompt directories through OSC 7; the active repository follows supported directory changes. PowerShell preserves the original prompt, and PowerShell-hosted agent presets install the same integration before launching the agent. Custom prompt scripts can override shell integration; custom `-File`/encoded-command launches are not rewritten. Unmapped Linux paths from WSL/custom shells cannot be interpreted as Windows Git paths; those sessions retain their launch context until a compatible directory report is available.
+PowerShell, CMD, and standard Git Bash profiles report prompt directories through OSC 7; the active repository follows supported directory changes. PowerShell preserves the original prompt, and PowerShell-hosted agent presets install the same integration before launching the agent. Git Bash-hosted agent presets report the directory through `PROMPT_COMMAND`; the shell that replaces the agent when it exits keeps reporting, so the repository still follows later `cd` commands. Custom prompt scripts can override shell integration; custom `-File`/encoded-command launches are not rewritten. Unmapped Linux paths from WSL/custom shells cannot be interpreted as Windows Git paths; those sessions retain their launch context until a compatible directory report is available.
 
 ## Shortcuts
 

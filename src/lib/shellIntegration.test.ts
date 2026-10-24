@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { cwdFromOsc7, formatTabTitle, getFriendlyShellName } from './shellIntegration';
+import { cwdFromOsc7, formatTabTitle, getFriendlyShellName, hostShellLabel } from './shellIntegration';
 import { errorMessage } from './errors';
 
 it('decodes PowerShell, CMD, and MSYS prompt directory reports', () => {
@@ -40,4 +40,13 @@ it('normalizes friendly shell names and formats tab titles consistently', () => 
   expect(formatTabTitle('Git Bash', 'main')).toBe('Git Bash (main)');
   expect(formatTabTitle('Windows PowerShell')).toBe('PowerShell');
   expect(formatTabTitle('Command Prompt', null)).toBe('Command Prompt');
+});
+it('names the host shell behind a profile executable', () => {
+  expect(hostShellLabel('C:\\Program Files\\Git\\bin\\bash.exe')).toBe('Git Bash');
+  expect(hostShellLabel('C:/Program Files/Git/bin/bash.exe')).toBe('Git Bash');
+  expect(hostShellLabel('pwsh.exe')).toBe('PowerShell 7');
+  expect(hostShellLabel('powershell.exe')).toBe('Windows PowerShell');
+  expect(hostShellLabel('cmd.exe')).toBe('Command Prompt');
+  expect(hostShellLabel('wsl.exe')).toBe('WSL');
+  expect(hostShellLabel('unknown-shell')).toBe('unknown-shell');
 });

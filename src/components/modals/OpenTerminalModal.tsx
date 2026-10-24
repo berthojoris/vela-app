@@ -6,7 +6,7 @@ import { useWorktreeStore } from '../../stores/useWorktreeStore';
 import { tauriIpc } from '../../lib/tauriIpc';
 import { errorMessage } from '../../lib/errors';
 import { useDialog } from '../../lib/useDialog';
-import { formatTabTitle } from '../../lib/shellIntegration';
+import { formatTabTitle, hostShellLabel } from '../../lib/shellIntegration';
 
 interface OpenTerminalModalProps {
   isOpen: boolean;
@@ -151,6 +151,11 @@ export const OpenTerminalModal: React.FC<OpenTerminalModalProps> = ({
   const selectedProfile = profiles.find((p) => p.id === selectedProfileId);
   const requestedProfileMissing =
     Boolean(initialProfileId) && profiles.length > 0 && !profiles.some((profile) => profile.id === initialProfileId);
+  // Agent profiles launch their CLI inside a host shell. Name that host so the
+  // selected preset cannot be mistaken for the other shell.
+  const hostShellHint = selectedProfile
+    ? `${selectedProfile.is_agent ? 'Runs inside' : 'Launches'} ${hostShellLabel(selectedProfile.executable)}`
+    : null;
 
   return (
     <div
@@ -291,6 +296,11 @@ export const OpenTerminalModal: React.FC<OpenTerminalModalProps> = ({
               >
                 Reload profiles
               </button>
+              {hostShellHint && (
+                <p className="mt-1.5 text-[10px] font-mono text-orca-muted/80" role="status">
+                  {hostShellHint}
+                </p>
+              )}
             </div>
 
             {/* 3. Split Screen Option */}

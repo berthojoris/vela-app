@@ -543,7 +543,16 @@ fn configure_shell(command: &mut CommandBuilder, shell: &str, args: &[String]) {
         );
     } else if matches!(binary.as_str(), "bash" | "bash.exe") {
         let previous = std::env::var("PROMPT_COMMAND").unwrap_or_default();
-        command.env("PROMPT_COMMAND", format!("printf '\\033]7;file://%s%s\\007' \"${{HOSTNAME:-localhost}}\" \"$PWD\"; {previous}"));
+        // `$PWD` is normally MSYS style (`/c/dir`), but a Windows-native parent can
+        // hand bash a `C:/dir` value. That would produce `file://hostC:/dir`, which
+        // has no host separator and parses as a bogus UNC path. Normalise to a
+        // leading slash so the file URL always separates host from path.
+        command.env(
+            "PROMPT_COMMAND",
+            format!(
+                "__vela_pwd=\"$PWD\"; case \"$__vela_pwd\" in [A-Za-z]:*) __vela_pwd=\"/$__vela_pwd\";; esac; printf '\\033]7;file://%s%s\\007' \"${{HOSTNAME:-localhost}}\" \"$__vela_pwd\"; unset __vela_pwd; {previous}"
+            ),
+        );
     }
 }
 
@@ -763,6 +772,79 @@ mod tests {
         ]);
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn conpty_git_bash_agent_host_runs_command_and_restores_shell() {
+        let _guard = CONPTY_TEST
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let Some(shell) = [
+            r"C:\Program Files\Git\bin\bash.exe",
+            r"C:\Program Files (x86)\Git\bin\bash.exe",
+        ]
+        .into_iter()
+        .find(|path| std::path::Path::new(path).exists()) else {
+            return;
+        };
+        use tauri::{Listener, Manager};
+        let app = tauri::test::mock_app();
+        let manager = PtyManager::new();
+        let id = format!("agent-host-{}", uuid::Uuid::new_v4());
+        let collected = Arc::new(Mutex::new(Vec::new()));
+        let sink = collected.clone();
+        let ack = manager.clone();
+        let ack_id = id.clone();
+        app.listen(format!("pty-output-{id}"), move |event| {
+            let bytes: Vec<u8> = serde_json::from_str(event.payload()).unwrap();
+            sink.lock().unwrap().extend(&bytes);
+            let _ = ack.acknowledge(&ack_id, bytes.len());
+        });
+        // Same argument shape the Droid CLI preset uses, with a harmless command.
+        manager
+            .spawn(
+                app.app_handle().clone(),
+                id.clone(),
+                shell.to_string(),
+                vec![
+                    "--login".into(),
+                    "-i".into(),
+                    "-c".into(),
+                    "echo VELA_AGENT_HOST_OK; exec bash -i".into(),
+                ],
+                std::env::current_dir()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned(),
+                80,
+                24,
+            )
+            .unwrap();
+        manager.start_output(&id).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(25);
+        while Instant::now() < deadline {
+            let text = String::from_utf8_lossy(&collected.lock().unwrap()).into_owned();
+            if text.contains("VELA_AGENT_HOST_OK") && text.contains("\x1b]7;file://") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let _ = manager.kill(&id);
+        let text = String::from_utf8_lossy(&collected.lock().unwrap()).into_owned();
+        assert!(text.contains("VELA_AGENT_HOST_OK"), "{text:?}");
+        // The replacement shell must still report its directory through OSC 7.
+        let Some(start) = text.find("\x1b]7;file://") else {
+            panic!("expected an OSC 7 directory report, got {text:?}");
+        };
+        let payload = &text[start + "\x1b]7;file://".len()..];
+        let payload = payload.split('\x07').next().unwrap_or_default();
+        let host = payload.split('/').next().unwrap_or_default();
+        assert!(
+            !host.contains(':'),
+            "OSC 7 host must not swallow the drive letter, got {payload:?}"
+        );
+    }
+
+    #[cfg(windows)]
     #[test]
     fn credits_are_bounded_and_acknowledged() {
         let flow = OutputFlow::default();
