@@ -207,6 +207,18 @@ async fn list_worktrees(
         .map_err(|e| format!("Task execution error: {}", e))?
 }
 
+/// Branch labels follow `git switch`/`git checkout`: this reads each worktree's HEAD file
+/// instead of running Git, so the UI can poll it without competing with its own Git writes.
+#[tauri::command]
+async fn read_worktree_branches(paths: Vec<String>) -> Result<Vec<Option<String>>, String> {
+    if paths.len() > 256 {
+        return Err("Too many worktrees to inspect at once.".into());
+    }
+    tokio::task::spawn_blocking(move || GitManager::read_head_branches(&paths))
+        .await
+        .map_err(|e| format!("Task execution error: {}", e))
+}
+
 #[tauri::command]
 async fn create_worktree(
     repo_path: String,
@@ -459,6 +471,7 @@ pub fn run() {
             read_text_file,
             save_text_file,
             list_worktrees,
+            read_worktree_branches,
             create_worktree,
             remove_worktree,
             get_worktree_diff,

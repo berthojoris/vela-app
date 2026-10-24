@@ -22,7 +22,7 @@ export const App: React.FC = () => {
   const [isOpenTerminalModalOpen, setIsOpenTerminalModalOpen] = useState(false);
   const [modalInitialProfileId, setModalInitialProfileId] = useState<string | undefined>(undefined);
   const { fetchProfiles, sessions, activeSessionId } = useTerminalStore();
-  const { initRepo, syncWithSession, refreshWorktrees, autoGitStatus } = useWorktreeStore();
+  const { initRepo, syncWithSession, refreshWorktrees, refreshWorktreeBranches, autoGitStatus } = useWorktreeStore();
   const isDiffOpen = useDiffStore((state) => state.isOpen);
   const workspaceView = useEditorStore((state) => state.workspaceView);
   const editorDocumentCount = useEditorStore((state) => state.documents.length);
@@ -96,6 +96,22 @@ export const App: React.FC = () => {
       clearInterval(interval);
     };
   }, [isOpenTerminalModalOpen, isCreateWorktreeOpen, isDiffOpen, autoGitStatus, refreshWorktrees]);
+
+  // Branch labels must follow `git switch`/`git checkout` even while Git auto-check is OFF:
+  // the backend reads each worktree's HEAD file, so this poll spawns no Git process and does
+  // not compete with Vela's own Git writes. It also keeps header/footer labels current while a
+  // modal is open, and runs on focus for the case where the window was in the background.
+  useEffect(() => {
+    const check = () => {
+      if (!document.hidden) void refreshWorktreeBranches();
+    };
+    const interval = setInterval(check, 2000);
+    window.addEventListener('focus', check);
+    return () => {
+      window.removeEventListener('focus', check);
+      clearInterval(interval);
+    };
+  }, [refreshWorktreeBranches]);
 
   return (
     <div className="h-screen w-screen flex flex-col bg-orca-darkest text-orca-text overflow-hidden select-none font-sans relative">

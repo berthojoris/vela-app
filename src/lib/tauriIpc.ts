@@ -129,6 +129,15 @@ export const tauriIpc = {
     return await invoke<GitWorktree[]>('list_worktrees', { repoPath, checkStatus });
   },
 
+  /**
+   * Reads the checked-out branch of each worktree from Git's HEAD file.
+   * `null` means the branch could not be read (keep the previous label).
+   */
+  async readWorktreeBranches(paths: string[]): Promise<(string | null)[]> {
+    if (!isTauri()) return [];
+    return await invoke<(string | null)[]>('read_worktree_branches', { paths });
+  },
+
   async createWorktree(repoPath: string, branch: string, baseBranch?: string): Promise<GitWorktree> {
     if (!isTauri()) throw new Error('Not running in Tauri');
     return await invoke<GitWorktree>('create_worktree', {

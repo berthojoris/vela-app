@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { GitWorktree } from '../types';
 import { tauriIpc } from '../lib/tauriIpc';
 import { errorMessage } from '../lib/errors';
+import { invalidateChanges } from '../lib/worktreeChangesCache';
 
 export function normalizePath(path: string): string {
   let result = path
@@ -29,6 +30,7 @@ interface WorktreeState {
   setAutoGitStatus: (enabled: boolean) => void;
   toggleAutoGitStatus: () => void;
   refreshWorktrees: (background?: boolean, forceStatus?: boolean) => Promise<void>;
+  refreshWorktreeBranches: () => Promise<void>;
   syncWithSession: (session?: { cwd?: string; worktree_id?: string | null } | null) => Promise<void>;
   createWorktree: (branch: string, baseBranch?: string) => Promise<GitWorktree>;
   removeWorktree: (worktreePath: string, force?: boolean) => Promise<void>;
@@ -38,6 +40,7 @@ interface WorktreeState {
 
 let syncSequence = 0;
 let refreshSequence = 0;
+let branchSequence = 0;
 let pendingRefresh: { repo: string; checkStatus: boolean; promise: Promise<void> } | null = null;
 
 // Remembers repository detection and worktree listings per directory so switching tabs
@@ -289,6 +292,48 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
     } finally {
       if (pendingRefresh === record) pendingRefresh = null;
     }
+  },
+
+  /**
+   * Keeps branch labels in sync with `git switch`/`git checkout` running in a terminal.
+   *
+   * The backend reads each worktree's HEAD file, so this never runs `git status` and stays
+   * independent of the auto Git status switch. An unreadable HEAD (`null`) keeps the label
+   * that was already shown; a real switch also invalidates the changed-files cache because
+   * the previous branch's file list no longer describes this worktree.
+   */
+  refreshWorktreeBranches: async () => {
+    const { repoPath, worktrees } = get();
+    if (!repoPath || worktrees.length === 0) return;
+    const paths = worktrees.map((worktree) => worktree.path);
+    const context = syncSequence;
+    const request = ++branchSequence;
+    let heads: (string | null)[];
+    try {
+      heads = await tauriIpc.readWorktreeBranches(paths);
+    } catch {
+      // A transient read (locked HEAD during checkout, worktree removed mid-flight) is retried
+      // by the next poll; it must not surface as an application error.
+      return;
+    }
+    // Drop out-of-order responses and any tab switch that replaced the repository mid-read.
+    if (request !== branchSequence || context !== syncSequence || get().repoPath !== repoPath) return;
+    const current = get().worktrees;
+    if (current.length !== paths.length) return;
+    let changed = false;
+    const next = current.map((worktree, index) => {
+      const head = heads[index];
+      if (worktree.path !== paths[index] || !head || head === worktree.branch) return worktree;
+      changed = true;
+      invalidateChanges(worktree.path);
+      return { ...worktree, branch: head };
+    });
+    if (!changed) return;
+    cacheWorktreeList(repoPath, next);
+    set({ worktrees: next });
+    // With auto check ON, refresh dirty counts and the changed-files panel right away instead
+    // of waiting for the next timed refresh. OFF stays hands-off, as the setting promises.
+    if (get().autoGitStatus) void get().refreshWorktrees(true);
   },
 
   createWorktree: async (branch, baseBranch) => {

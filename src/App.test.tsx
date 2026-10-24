@@ -6,11 +6,13 @@ import { useWorktreeStore } from './stores/useWorktreeStore';
 import { useDiffStore } from './stores/useDiffStore';
 import { useTerminalStore } from './stores/useTerminalStore';
 import { useEditorStore } from './stores/useEditorStore';
+import { worktree } from './test/helpers';
 
 const ipc = vi.hoisted(() => ({
   getShellProfiles: vi.fn(async () => []),
   onAppError: vi.fn(async () => () => {}),
   listWorktrees: vi.fn(async () => []),
+  readWorktreeBranches: vi.fn(async () => [] as (string | null)[]),
 }));
 vi.mock('./lib/tauriIpc', () => ({ tauriIpc: ipc }));
 vi.mock('./components/layout/TitleBar', () => ({ TitleBar: () => null }));
@@ -74,4 +76,30 @@ it('pauses timed and focus refreshes while Diff is open and resumes after closin
   fireEvent.focus(window);
   await act(async () => {});
   expect(ipc.listWorktrees).toHaveBeenCalledWith('C:/A', true);
+});
+
+it('follows a branch switch on window focus even while Git auto-check is OFF', async () => {
+  vi.useFakeTimers();
+  useWorktreeStore.setState(useWorktreeStore.getInitialState());
+  useTerminalStore.setState(useTerminalStore.getInitialState());
+  useDiffStore.setState(useDiffStore.getInitialState());
+  render(<App />);
+  await act(async () => {
+    useWorktreeStore.setState({
+      repoPath: 'C:/A',
+      autoGitStatus: false,
+      worktrees: [worktree('main', 'C:/A')],
+    });
+  });
+  ipc.readWorktreeBranches.mockClear();
+  ipc.readWorktreeBranches.mockResolvedValue(['feat/switched']);
+  ipc.listWorktrees.mockClear();
+
+  await act(async () => {
+    fireEvent.focus(window);
+  });
+
+  expect(ipc.readWorktreeBranches).toHaveBeenCalledWith(['C:/A']);
+  expect(useWorktreeStore.getState().worktrees[0].branch).toBe('feat/switched');
+  expect(ipc.listWorktrees).not.toHaveBeenCalled();
 });

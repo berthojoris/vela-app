@@ -228,6 +228,53 @@ impl GitManager {
         }
         Ok(worktrees)
     }
+    /// Branch checked out in `worktree_path`, read straight from that worktree's HEAD file.
+    ///
+    /// `git switch` / `git checkout` rewrite HEAD, so the UI can follow branch changes with a
+    /// cheap file read instead of spawning Git on every poll. `None` means "unknown": callers
+    /// keep the previous label rather than guessing. A raw commit ID means detached HEAD, which
+    /// is also the wording `git worktree list` uses.
+    pub fn read_head_branch(worktree_path: &str) -> Option<String> {
+        let path = Self::normalize_path(worktree_path);
+        let dot_git = Path::new(&path).join(".git");
+        let git_dir = if dot_git.is_dir() {
+            dot_git
+        } else {
+            // Linked worktrees use a `.git` file: "gitdir: <absolute or relative path>".
+            let pointer = std::fs::read_to_string(&dot_git).ok()?;
+            let target = pointer.trim().strip_prefix("gitdir:")?.trim().to_string();
+            let target = Path::new(&target);
+            if target.is_absolute() {
+                target.to_path_buf()
+            } else {
+                Path::new(&path).join(target)
+            }
+        };
+        let head = std::fs::read_to_string(git_dir.join("HEAD")).ok()?;
+        let head = head.trim();
+        match head.strip_prefix("ref:") {
+            Some(reference) => {
+                let branch = reference.trim().strip_prefix("refs/heads/")?;
+                (!branch.is_empty()).then(|| branch.to_string())
+            }
+            None if head.len() >= 40
+                && head.len() <= 64
+                && head.bytes().all(|byte| byte.is_ascii_hexdigit()) =>
+            {
+                Some("detached".into())
+            }
+            None => None,
+        }
+    }
+
+    /// One HEAD branch per requested worktree, in the same order; `None` keeps the current label.
+    pub fn read_head_branches(paths: &[String]) -> Vec<Option<String>> {
+        paths
+            .iter()
+            .map(|path| Self::read_head_branch(path))
+            .collect()
+    }
+
     pub fn create_worktree(
         repo_path: &str,
         branch: &str,
@@ -941,6 +988,81 @@ mod tests {
         assert!(chunks["test.txt"].contains("+contains diff --git text"));
     }
     #[test]
+    fn head_branch_is_read_from_main_and_linked_worktree_metadata() {
+        // Synthetic worktrees only: no Git process is involved in reading HEAD.
+        struct Scratch(std::path::PathBuf);
+        impl Drop for Scratch {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let root = std::env::var_os("LOCALAPPDATA")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir)
+            .join("Temp/opencode")
+            .join(format!("vela-head-test-{}", uuid::Uuid::new_v4()));
+        let main = root.join("main");
+        let linked = root.join("linked");
+        let linked_git_dir = root.join("gitdirs/linked");
+        std::fs::create_dir_all(main.join(".git")).unwrap();
+        std::fs::create_dir_all(&linked).unwrap();
+        std::fs::create_dir_all(&linked_git_dir).unwrap();
+        let scratch = Scratch(root);
+        let main_path = main.to_string_lossy().replace('\\', "/");
+        let linked_path = linked.to_string_lossy().replace('\\', "/");
+        let missing_path = scratch
+            .0
+            .join("missing")
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        // Symbolic HEAD: branch names may contain slashes and must never be shortened.
+        std::fs::write(
+            main.join(".git/HEAD"),
+            "ref: refs/heads/feat/branch-after-switch\n",
+        )
+        .unwrap();
+        assert_eq!(
+            GitManager::read_head_branch(&main_path).as_deref(),
+            Some("feat/branch-after-switch")
+        );
+
+        // Linked worktrees reach their Git directory through a `.git` file (relative here).
+        std::fs::write(linked.join(".git"), "gitdir: ../gitdirs/linked\n").unwrap();
+        std::fs::write(linked_git_dir.join("HEAD"), "ref: refs/heads/task/linked\n").unwrap();
+
+        // A raw commit ID is detached HEAD, worded like `git worktree list`.
+        std::fs::write(main.join(".git/HEAD"), format!("{}\n", "a".repeat(40))).unwrap();
+        assert_eq!(
+            GitManager::read_head_branch(&main_path).as_deref(),
+            Some("detached")
+        );
+
+        // Unknown or malformed metadata keeps the caller's previous label (None).
+        std::fs::write(main.join(".git/HEAD"), "not a ref\n").unwrap();
+        assert_eq!(GitManager::read_head_branch(&main_path), None);
+        assert_eq!(GitManager::read_head_branch(&missing_path), None);
+
+        std::fs::write(
+            main.join(".git/HEAD"),
+            "ref: refs/heads/feat/branch-after-switch\n",
+        )
+        .unwrap();
+        assert_eq!(
+            GitManager::read_head_branches(&[
+                main_path.clone(),
+                linked_path.clone(),
+                missing_path.clone()
+            ]),
+            vec![
+                Some("feat/branch-after-switch".into()),
+                Some("task/linked".into()),
+                None
+            ]
+        );
+    }
+
+    #[test]
     fn mutation_guard_rejects_duplicate_writes() {
         let guard = Mutation::begin("C:/unique-test-repo").unwrap();
         assert!(Mutation::begin("c:/unique-test-repo").is_err());
@@ -985,7 +1107,19 @@ mod tests {
         run(&["config", "core.hooksPath", &hooks.to_string_lossy()]);
         std::fs::write(scratch.0.join("repo/first.txt"), "original\n").unwrap();
         GitManager::commit_worktree(&path, "initial").unwrap();
+        // The label follows a real `git checkout` without listing worktrees.
+        assert_eq!(GitManager::read_head_branch(&path).as_deref(), Some("main"));
+        run(&["checkout", "-b", "feat/alternate"]);
+        assert_eq!(
+            GitManager::read_head_branch(&path).as_deref(),
+            Some("feat/alternate")
+        );
+        run(&["checkout", "main"]);
         let worktree = GitManager::create_worktree(&path, "feat/test", None).unwrap();
+        assert_eq!(
+            GitManager::read_head_branch(&worktree.path).as_deref(),
+            Some("feat/test")
+        );
         // A write in a linked worktree must block writes through the main worktree.
         let guard = Mutation::repository(&worktree.path).unwrap();
         assert!(Mutation::repository(&path).is_err());
@@ -1031,6 +1165,7 @@ mod tests {
             .is_empty());
         assert!(GitManager::get_worktree_diff(&path).unwrap().is_empty());
         GitManager::remove_worktree(&path, &worktree.path, false).unwrap();
+        assert_eq!(GitManager::read_head_branch(&worktree.path), None);
         assert_eq!(GitManager::list_worktrees(&path, true).unwrap().len(), 1);
         assert_eq!(GitManager::list_worktrees(&path, false).unwrap().len(), 1);
         assert_eq!(

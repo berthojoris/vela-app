@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { deferred, worktree } from '../test/helpers';
 import { GitWorktree } from '../types';
+import { cacheChanges, getCachedChanges } from '../lib/worktreeChangesCache';
 
 const ipc = vi.hoisted(() => ({
   findGitRepo: vi.fn(),
   listWorktrees: vi.fn(),
+  readWorktreeBranches: vi.fn(),
   createWorktree: vi.fn(),
   removeWorktree: vi.fn(),
 }));
@@ -310,6 +312,69 @@ it('forces a new post-mutation read instead of reusing an earlier status check',
   await Promise.all([background, afterCommit]);
   expect(ipc.listWorktrees).toHaveBeenCalledTimes(2);
   expect(store.getState().worktrees[0].dirty_files_count).toBe(0);
+});
+
+describe('branch labels follow git switch/checkout', () => {
+  it('updates a worktree branch from HEAD without running git status', async () => {
+    store.setState({ repoPath: 'C:/A', worktrees: [worktree('main', 'C:/A')], autoGitStatus: false });
+    const before = store.getState().statusRevision;
+    ipc.readWorktreeBranches.mockResolvedValue(['feat/switched']);
+
+    await store.getState().refreshWorktreeBranches();
+
+    expect(ipc.readWorktreeBranches).toHaveBeenCalledWith(['C:/A']);
+    expect(store.getState().worktrees[0].branch).toBe('feat/switched');
+    expect(store.getState().statusRevision).toBe(before);
+    expect(ipc.listWorktrees).not.toHaveBeenCalled();
+  });
+
+  it('keeps the previous label when HEAD is unreadable or unchanged', async () => {
+    store.setState({
+      repoPath: 'C:/A',
+      worktrees: [worktree('main', 'C:/A'), worktree('task', 'C:/A/task')],
+      autoGitStatus: false,
+    });
+    ipc.readWorktreeBranches.mockResolvedValue([null, 'task']);
+
+    await store.getState().refreshWorktreeBranches();
+
+    expect(store.getState().worktrees.map((item) => item.branch)).toEqual(['main', 'task']);
+  });
+
+  it('ignores a HEAD read that finishes after the repository changed', async () => {
+    store.setState({ repoPath: 'C:/A', worktrees: [worktree('main', 'C:/A')] });
+    const pending = deferred<(string | null)[]>();
+    ipc.readWorktreeBranches.mockReturnValueOnce(pending.promise);
+    const read = store.getState().refreshWorktreeBranches();
+    ipc.findGitRepo.mockResolvedValue('C:/B');
+    ipc.listWorktrees.mockResolvedValue([worktree('B', 'C:/B')]);
+
+    await store.getState().syncWithSession({ cwd: 'C:/B' });
+    pending.resolve(['feat/stale']);
+    await read;
+
+    expect(store.getState().worktrees).toHaveLength(1);
+    expect(store.getState().worktrees[0].path).toBe('C:/B');
+    expect(store.getState().worktrees[0].branch).toBe('B');
+  });
+
+  it('invalidates cached changes and refreshes status when auto check is ON', async () => {
+    store.setState({
+      repoPath: 'C:/A',
+      worktrees: [{ ...worktree('main', 'C:/A'), dirty_files_count: 2 }],
+      autoGitStatus: true,
+    });
+    cacheChanges('C:/A', { total: 2, files: [] });
+    ipc.readWorktreeBranches.mockResolvedValue(['feat/next']);
+    ipc.listWorktrees.mockResolvedValue([{ ...worktree('main', 'C:/A'), branch: 'feat/next', dirty_files_count: 0 }]);
+
+    await store.getState().refreshWorktreeBranches();
+
+    expect(getCachedChanges('C:/A')).toBeUndefined();
+    expect(store.getState().worktrees[0].branch).toBe('feat/next');
+    await vi.waitFor(() => expect(ipc.listWorktrees).toHaveBeenCalledWith('C:/A', true));
+    expect(store.getState().worktrees[0].dirty_files_count).toBe(0);
+  });
 });
 
 it('preserves drive roots and UNC share roots when normalizing', () => {
