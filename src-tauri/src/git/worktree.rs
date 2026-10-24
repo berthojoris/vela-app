@@ -29,10 +29,29 @@ impl Mutation {
             .map_err(|_| "Git operation registry is unavailable")?;
         if !operations.insert(key.clone()) {
             return Err(
-                "Another Git write is already running for this worktree. Please wait.".into(),
+                "Another Git write is already running for this repository. Please wait.".into(),
             );
         }
         Ok(Self(key))
+    }
+    /// All worktrees of one repository share a single key: the common Git directory.
+    /// Falls back to the path itself when Git cannot resolve it; the write then fails on its own.
+    fn repository(path: &str) -> Result<Self, String> {
+        let common = GitManager::run(
+            GitManager::git_cmd().args([
+                "-C",
+                path,
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-common-dir",
+            ]),
+            64 * 1024,
+        )
+        .ok()
+        .filter(|result| result.status.success())
+        .map(|result| String::from_utf8_lossy(&result.stdout).trim().to_string())
+        .filter(|dir| !dir.is_empty());
+        Self::begin(common.as_deref().unwrap_or(path))
     }
 }
 impl Drop for Mutation {
@@ -215,7 +234,7 @@ impl GitManager {
         base_branch: Option<&str>,
     ) -> Result<GitWorktree, String> {
         let path = Self::directory(repo_path)?;
-        let _operation = Mutation::begin(&path)?;
+        let _operation = Mutation::repository(&path)?;
         let branch = branch.trim();
         if branch.is_empty()
             || branch.len() > 200
@@ -326,7 +345,7 @@ impl GitManager {
     ) -> Result<(), String> {
         let repo = Self::directory(repo_path)?;
         let path = Self::directory(worktree_path)?;
-        let _operation = Mutation::begin(&repo)?;
+        let _operation = Mutation::repository(&repo)?;
         let worktrees = Self::list_worktrees(&repo, false)?;
         let target = worktrees
             .iter()
@@ -550,7 +569,7 @@ impl GitManager {
     }
     pub fn commit_worktree(worktree_path: &str, message: &str) -> Result<String, String> {
         let path = Self::directory(worktree_path)?;
-        let _operation = Mutation::begin(&path)?;
+        let _operation = Mutation::repository(&path)?;
         let message = message.trim();
         if message.is_empty() || message.len() > 16 * 1024 || message.contains('\0') {
             return Err(
@@ -569,7 +588,7 @@ impl GitManager {
         let path = Self::directory(worktree_path)?;
         let file = file_path.replace('\\', "/");
         validate_rollback_path(&file)?;
-        let _operation = Mutation::begin(&path)?;
+        let _operation = Mutation::repository(&path)?;
         let entries = Self::status(&path)?;
         let matches: Vec<_> = entries.iter().filter(|entry| entry.path == file).collect();
         if matches.len() != 1 {
@@ -652,7 +671,7 @@ impl GitManager {
     }
     pub fn reset_worktree(worktree_path: &str) -> Result<(), String> {
         let path = Self::directory(worktree_path)?;
-        let _operation = Mutation::begin(&path)?;
+        let _operation = Mutation::repository(&path)?;
 
         let has_head = Self::run(
             Self::git_cmd().args(["-C", &path, "rev-parse", "--verify", "HEAD"]),
@@ -967,6 +986,10 @@ mod tests {
         std::fs::write(scratch.0.join("repo/first.txt"), "original\n").unwrap();
         GitManager::commit_worktree(&path, "initial").unwrap();
         let worktree = GitManager::create_worktree(&path, "feat/test", None).unwrap();
+        // A write in a linked worktree must block writes through the main worktree.
+        let guard = Mutation::repository(&worktree.path).unwrap();
+        assert!(Mutation::repository(&path).is_err());
+        drop(guard);
         let from_linked = GitManager::create_worktree(&worktree.path, "feat/second", None).unwrap();
         assert!(from_linked.name.starts_with("repo-feat_second-"));
         GitManager::remove_worktree(&path, &from_linked.path, false).unwrap();

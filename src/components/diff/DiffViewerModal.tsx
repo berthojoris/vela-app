@@ -245,13 +245,13 @@ export const DiffViewerModal: React.FC = () => {
           </div>
         )}
 
-        {/* Rollback Error Banner */}
+        {/* Rollback / Reset Error Banner */}
         {rollbackError && (
           <div className="px-4 py-2 bg-orca-rose/15 border-b border-orca-rose/30 flex items-center gap-2.5 justify-between">
             <div className="flex items-center gap-2 truncate">
               <AlertCircle className="w-4 h-4 text-orca-rose shrink-0" />
               <span className="font-mono text-[11px] text-rose-300 truncate" title={rollbackError}>
-                Rollback failed: {rollbackError}
+                {rollbackError}
               </span>
             </div>
             <button

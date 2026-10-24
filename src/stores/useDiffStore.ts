@@ -178,7 +178,7 @@ export const useDiffStore = create<DiffState>((set, get) => ({
       await tauriIpc.rollbackWorktreeFile(worktreePath, filePath);
     } catch (error) {
       const detail = errorMessage(error, `Git could not rollback ${filePath}.`);
-      set({ isRollingBack: false, rollingBackFile: null, rollbackError: detail });
+      set({ isRollingBack: false, rollingBackFile: null, rollbackError: `Rollback failed: ${detail}` });
       throw new Error(detail);
     }
     set({ isRollingBack: false, rollingBackFile: null });
@@ -200,7 +200,7 @@ export const useDiffStore = create<DiffState>((set, get) => ({
       await tauriIpc.resetWorktree(worktreePath);
     } catch (error) {
       const detail = errorMessage(error, 'Git could not reset changes in this worktree.');
-      set({ isRollingBack: false, rollbackError: detail });
+      set({ isRollingBack: false, rollbackError: `Reset failed: ${detail}` });
       throw new Error(detail);
     }
     set({ isRollingBack: false });

@@ -181,6 +181,13 @@ describe('rollback and reset lifecycle', () => {
     ipc.rollbackWorktreeFile.mockRejectedValue('file locked by process');
     await expect(store.getState().rollbackFile('A.ts')).rejects.toThrow('file locked by process');
     expect(store.getState().isRollingBack).toBe(false);
-    expect(store.getState().rollbackError).toContain('file locked by process');
+    expect(store.getState().rollbackError).toBe('Rollback failed: file locked by process');
+  });
+
+  it('labels reset failures as reset, not rollback', async () => {
+    ipc.resetWorktree.mockRejectedValue('index is locked');
+    await expect(store.getState().resetAll()).rejects.toThrow('index is locked');
+    expect(store.getState().isRollingBack).toBe(false);
+    expect(store.getState().rollbackError).toBe('Reset failed: index is locked');
   });
 });
