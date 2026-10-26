@@ -13,6 +13,8 @@ import {
   AlertCircle,
   Loader2,
   Files,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { useWorktreeStore } from '../../stores/useWorktreeStore';
 import { useTerminalStore } from '../../stores/useTerminalStore';
@@ -22,6 +24,7 @@ import { ConfirmDialog } from '../common/ConfirmDialog';
 import { errorMessage } from '../../lib/errors';
 import { useNoticeStore } from '../../stores/useNoticeStore';
 import { tauriIpc } from '../../lib/tauriIpc';
+import { formatTabTitle } from '../../lib/shellIntegration';
 import { FileExplorer } from './FileExplorer';
 
 interface WorktreeSidebarProps {
@@ -38,6 +41,8 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
   const [mode, setMode] = useState<'git' | 'files'>('git');
   const [explorerRoot, setExplorerRoot] = useState<string | null>(null);
   const [choosingFolder, setChoosingFolder] = useState(false);
+  const [launchingWorktree, setLaunchingWorktree] = useState<string | null>(null);
+  const [copiedPath, setCopiedPath] = useState<string | null>(null);
   const choosingRef = useRef(false);
 
   const {
@@ -57,7 +62,7 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
     clearError,
   } = useWorktreeStore();
 
-  const { sessions, activeSessionId, setActiveSession } = useTerminalStore();
+  const { sessions, activeSessionId, setActiveSession, createSession } = useTerminalStore();
   const { openDiffModal } = useDiffStore();
 
   const activeSession = sessions.find((s) => s.id === activeSessionId);
@@ -107,6 +112,46 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
     const existing = sessions.find((s) => !s.exited && (s.worktree_id === wt.id || norm(s.cwd) === targetPath));
     if (existing) {
       setActiveSession(existing.id);
+    }
+  };
+
+  const handleLaunchInWorktree = async (wt: { id: string; path: string; branch: string }) => {
+    if (launchingWorktree) return;
+    setLaunchingWorktree(wt.id);
+    try {
+      const { profiles, defaultProfileId } = useTerminalStore.getState();
+      const profile = profiles.find((p) => p.id === defaultProfileId) ?? profiles[0];
+      await createSession({
+        shell: profile?.executable,
+        args: profile?.args,
+        title: formatTabTitle(profile?.name || 'Terminal', wt.branch),
+        cwd: wt.path,
+        worktreeId: wt.id,
+        isAgent: profile?.is_agent,
+        agentType: profile?.agent_type,
+      });
+    } catch (error) {
+      useNoticeStore.getState().report('Unable to open a tab in this worktree', error);
+    } finally {
+      setLaunchingWorktree(null);
+    }
+  };
+
+  const handleOpenWorktreeInExplorer = async (path: string) => {
+    try {
+      await tauriIpc.openDirectoryInExplorer(path);
+    } catch (error) {
+      useNoticeStore.getState().report('Unable to open the worktree directory', error);
+    }
+  };
+
+  const handleCopyPath = async (path: string) => {
+    try {
+      await navigator.clipboard.writeText(path);
+      setCopiedPath(path);
+      setTimeout(() => setCopiedPath((current) => (current === path ? null : current)), 1500);
+    } catch (error) {
+      useNoticeStore.getState().report('Unable to copy the worktree path', error);
     }
   };
 
@@ -257,8 +302,8 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
                 }`}
                 title={
                   autoGitStatus
-                    ? 'Git Status Check: ON (Status git diperiksa otomatis saat berpindah tab & periodik)'
-                    : 'Git Status Check: OFF (Pemeriksaan git status nonaktif agar berpindah tab lebih cepat. Klik untuk mengaktifkan)'
+                    ? 'Git Status Check: ON (Git status is checked automatically when switching tabs and periodically)'
+                    : 'Git Status Check: OFF (Git status checks are disabled so tab switching stays fast. Click to enable)'
                 }
               >
                 <span className="text-[9px] font-sans font-medium text-orca-muted">Git</span>
@@ -405,7 +450,7 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
                               className="text-orca-muted"
                               title={
                                 !autoGitStatus
-                                  ? 'Git Auto Check: OFF (Klik ↻ Refresh untuk cek status terbaru)'
+                                  ? 'Git Auto Check: OFF (click ↻ Refresh to check the current status)'
                                   : undefined
                               }
                             >
@@ -416,6 +461,44 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
 
                         {/* Action Buttons */}
                         <div className="flex items-center gap-1 pt-1.5 border-t border-orca-border/50">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void handleLaunchInWorktree(wt);
+                            }}
+                            className="h-6 w-6 rounded bg-orca-hover hover:bg-orca-border text-orca-muted hover:text-white flex items-center justify-center transition-colors cursor-pointer disabled:opacity-40"
+                            title="Open a new tab in this worktree"
+                            aria-label={`Open a new tab in ${wt.branch}`}
+                            disabled={launchingWorktree === wt.id}
+                          >
+                            <Terminal className="w-3 h-3" />
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void handleOpenWorktreeInExplorer(wt.path);
+                            }}
+                            className="h-6 w-6 rounded bg-orca-hover hover:bg-orca-border text-orca-muted hover:text-white flex items-center justify-center transition-colors cursor-pointer"
+                            title="Reveal this worktree in File Explorer"
+                            aria-label={`Reveal ${wt.branch} in File Explorer`}
+                          >
+                            <FolderOpen className="w-3 h-3" />
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void handleCopyPath(wt.path);
+                            }}
+                            className="h-6 w-6 rounded bg-orca-hover hover:bg-orca-border text-orca-muted hover:text-white flex items-center justify-center transition-colors cursor-pointer"
+                            title="Copy worktree path"
+                            aria-label={`Copy path of ${wt.branch}`}
+                          >
+                            {copiedPath === wt.path ? (
+                              <Check className="w-3 h-3 text-orca-emerald" />
+                            ) : (
+                              <Copy className="w-3 h-3" />
+                            )}
+                          </button>
                           <button
                             onClick={(e) => {
                               e.stopPropagation();

@@ -9,6 +9,12 @@ import { useTerminalStore } from '../../stores/useTerminalStore';
 import { cwdFromOsc7 } from '../../lib/shellIntegration';
 import { errorMessage } from '../../lib/errors';
 import { useNoticeStore } from '../../stores/useNoticeStore';
+import {
+  DEFAULT_TERMINAL_FONT_SIZE,
+  getTerminalFontSize,
+  onTerminalFontSizeChange,
+  setTerminalFontSize,
+} from '../../lib/terminalFontSize';
 
 interface XTermViewProps {
   sessionId: string;
@@ -19,7 +25,12 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive }) => 
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const searchAddonRef = useRef<SearchAddon | null>(null);
+  const searchOpenRef = useRef(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [streamError, setStreamError] = useState<string | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -44,7 +55,7 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive }) => 
     const term = new Terminal({
       cursorBlink: true,
       cursorStyle: 'bar',
-      fontSize: 13,
+      fontSize: getTerminalFontSize(),
       fontFamily: 'JetBrains Mono, Cascadia Code, Fira Code, Consolas, monospace',
       letterSpacing: 0,
       lineHeight: 1.25,
@@ -80,7 +91,9 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive }) => 
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
     term.loadAddon(new WebLinksAddon());
-    term.loadAddon(new SearchAddon());
+    const searchAddon = new SearchAddon();
+    term.loadAddon(searchAddon);
+    searchAddonRef.current = searchAddon;
 
     try {
       term.open(containerRef.current);
@@ -125,6 +138,12 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive }) => 
     };
     const fitTimer = setTimeout(fit, 50);
 
+    // Font size is shared by every pane, so store it once and let each live terminal follow.
+    const offFontSize = onTerminalFontSizeChange((size) => {
+      if (term.options) term.options.fontSize = size;
+      fit();
+    });
+
     const cwdHandler = term.parser.registerOscHandler(7, (data) => {
       const cwd = cwdFromOsc7(data);
       if (!disposed && cwd) useTerminalStore.getState().updateSessionCwd(sessionId, cwd);
@@ -164,8 +183,57 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive }) => 
 
     // Let Ctrl+V / Ctrl+Shift+V fall through to the browser paste event
     // instead of xterm sending a raw ^V, so the paste handler below decides.
+    let swallowEscapeUp = false;
     term.attachCustomKeyEventHandler((e) => {
       if (e.type === 'keydown' && e.ctrlKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === 'v') {
+        return false;
+      }
+      // Ctrl+F opens the in-terminal search bar instead of sending ^F to the shell.
+      if (e.type === 'keydown' && e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        e.stopPropagation();
+        searchOpenRef.current = true;
+        setSearchOpen(true);
+        return false;
+      }
+      // Ctrl+= / Ctrl+- / Ctrl+0 zoom every terminal pane and persist the size.
+      if (e.type === 'keydown' && e.ctrlKey && !e.altKey && !e.metaKey) {
+        const size = term.options?.fontSize ?? getTerminalFontSize();
+        if (e.key === '=' || e.key === '+') {
+          e.preventDefault();
+          e.stopPropagation();
+          setTerminalFontSize(size + 1);
+          return false;
+        }
+        if (e.key === '-' || e.key === '_') {
+          e.preventDefault();
+          e.stopPropagation();
+          setTerminalFontSize(size - 1);
+          return false;
+        }
+        if (e.key === '0') {
+          e.preventDefault();
+          e.stopPropagation();
+          setTerminalFontSize(DEFAULT_TERMINAL_FONT_SIZE);
+          return false;
+        }
+      }
+      // Closing search must not leak an ESC record into the shell on keyup.
+      if (e.key === 'Escape' && swallowEscapeUp && e.type === 'keyup') {
+        swallowEscapeUp = false;
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+      }
+      if (e.key === 'Escape' && searchOpenRef.current) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.type === 'keydown') {
+          searchOpenRef.current = false;
+          swallowEscapeUp = true;
+          setSearchOpen(false);
+          term.focus();
+        }
         return false;
       }
       // Intercept Shift+Enter: xterm's default '\r' submits the prompt. Send a Win32 key
@@ -302,8 +370,10 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive }) => 
       if (unlistenPtyOutput) unlistenPtyOutput();
       if (unlistenPtyExit) unlistenPtyExit();
       if (unlistenPtyError) unlistenPtyError();
+      offFontSize();
       termRef.current = null;
       fitAddonRef.current = null;
+      searchAddonRef.current = null;
       term.dispose();
     };
   }, [sessionId]);
@@ -326,6 +396,13 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive }) => 
     return () => clearTimeout(timer);
   }, [isActive]);
 
+  useEffect(() => {
+    if (!searchOpen) return;
+    // Selecting the existing query makes the next keystroke replace it.
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  }, [searchOpen]);
+
   return (
     <div className="w-full h-full relative">
       {streamError && (
@@ -345,6 +422,64 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive }) => 
           isActive ? 'ring-1 ring-orca-borderLight' : 'opacity-85'
         }`}
       />
+      {searchOpen && (
+        <div className="absolute z-20 top-2 right-2 flex items-center gap-1 p-1 rounded-md bg-orca-darker border border-orca-border text-xs">
+          <input
+            ref={searchInputRef}
+            value={searchTerm}
+            onChange={(e) => {
+              setSearchTerm(e.target.value);
+              searchAddonRef.current?.findNext(e.target.value, { incremental: true, caseSensitive: false });
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                if (e.shiftKey) searchAddonRef.current?.findPrevious(searchTerm);
+                else searchAddonRef.current?.findNext(searchTerm);
+              } else if (e.key === 'Escape') {
+                e.preventDefault();
+                searchOpenRef.current = false;
+                setSearchOpen(false);
+                termRef.current?.focus();
+              }
+            }}
+            placeholder="Find in terminal"
+            aria-label="Find in terminal"
+            className="w-44 bg-orca-darkest px-2 py-1 rounded border border-orca-border focus:border-orca-accent outline-none text-white font-mono text-[11px] placeholder:text-orca-muted/60"
+          />
+          <button
+            type="button"
+            onClick={() => searchAddonRef.current?.findPrevious(searchTerm)}
+            disabled={!searchTerm}
+            className="px-1.5 py-1 rounded hover:bg-orca-hover text-orca-muted hover:text-white disabled:opacity-40"
+            title="Previous match (Shift+Enter)"
+          >
+            ↑
+          </button>
+          <button
+            type="button"
+            onClick={() => searchAddonRef.current?.findNext(searchTerm)}
+            disabled={!searchTerm}
+            className="px-1.5 py-1 rounded hover:bg-orca-hover text-orca-muted hover:text-white disabled:opacity-40"
+            title="Next match (Enter)"
+          >
+            ↓
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              searchOpenRef.current = false;
+              setSearchOpen(false);
+              termRef.current?.focus();
+            }}
+            className="px-1.5 py-1 rounded hover:bg-orca-hover text-orca-muted hover:text-white"
+            title="Close search (Esc)"
+            aria-label="Close search"
+          >
+            ✕
+          </button>
+        </div>
+      )}
     </div>
   );
 };

@@ -57,6 +57,16 @@ describe('stable terminal panes', () => {
     store.getState().updateSessionCwd('one', 'C:/new');
     expect(store.getState().sessions[0].worktree_id).toBeNull();
   });
+  it('reorders tabs without touching the active pane', () => {
+    store.getState().reorderSessions('three', 'one');
+    expect(store.getState().sessions.map((item) => item.id)).toEqual(['three', 'one', 'two']);
+    expect(store.getState().activeSessionId).toBe('one');
+  });
+  it('ignores drags that reference removed or identical tabs', () => {
+    store.getState().reorderSessions('one', 'one');
+    store.getState().reorderSessions('missing', 'two');
+    expect(store.getState().sessions.map((item) => item.id)).toEqual(['one', 'two', 'three']);
+  });
 });
 
 describe('safe launch defaults', () => {

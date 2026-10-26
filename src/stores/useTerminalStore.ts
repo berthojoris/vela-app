@@ -31,6 +31,8 @@ interface TerminalState {
   setSplitMode: (mode: 'none' | 'vertical' | 'horizontal') => void;
   fetchProfiles: () => Promise<void>;
   renameSession: (id: string, newTitle: string) => void;
+  /** Moves the dragged tab in front of (or behind) the drop target. */
+  reorderSessions: (draggedId: string, targetId: string) => void;
 }
 
 // Drop the retired recent-directory history from older builds
@@ -198,5 +200,18 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     set((state) => ({
       sessions: state.sessions.map((s) => (s.id === id ? { ...s, title: newTitle } : s)),
     }));
+  },
+
+  reorderSessions: (draggedId: string, targetId: string) => {
+    set((state) => {
+      if (draggedId === targetId) return state;
+      const from = state.sessions.findIndex((s) => s.id === draggedId);
+      const to = state.sessions.findIndex((s) => s.id === targetId);
+      if (from < 0 || to < 0) return state;
+      const sessions = [...state.sessions];
+      const [moved] = sessions.splice(from, 1);
+      sessions.splice(to, 0, moved);
+      return { sessions };
+    });
   },
 }));

@@ -56,7 +56,12 @@ vi.mock('@xterm/addon-fit', () => ({
   },
 }));
 vi.mock('@xterm/addon-web-links', () => ({ WebLinksAddon: class {} }));
-vi.mock('@xterm/addon-search', () => ({ SearchAddon: class {} }));
+vi.mock('@xterm/addon-search', () => ({
+  SearchAddon: class {
+    findNext() {}
+    findPrevious() {}
+  },
+}));
 vi.mock('@xterm/addon-webgl', () => ({
   WebglAddon: class {
     onContextLoss() {}
@@ -95,6 +100,26 @@ beforeEach(() => {
       disconnect() {}
     }
   );
+});
+
+it('opens in-terminal search with Ctrl+F without sending ^F to the shell', async () => {
+  render(<XTermView sessionId="test" isActive />);
+  await waitFor(() => expect(ipc.startTerminalOutput).toHaveBeenCalled());
+  const event = new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true, cancelable: true });
+  expect(state.keyHandler!(event)).toBe(false);
+  expect(event.defaultPrevented).toBe(true);
+  expect(ipc.writeTerminal).not.toHaveBeenCalled();
+  expect(await screen.findByLabelText('Find in terminal')).toBeTruthy();
+});
+
+it('zooms the terminal font with Ctrl+= and persists it for every pane', async () => {
+  localStorage.clear();
+  render(<XTermView sessionId="test" isActive />);
+  await waitFor(() => expect(ipc.startTerminalOutput).toHaveBeenCalled());
+  const event = new KeyboardEvent('keydown', { key: '=', ctrlKey: true, bubbles: true, cancelable: true });
+  expect(state.keyHandler!(event)).toBe(false);
+  expect(localStorage.getItem('vela_terminal_font_size')).toBe('14');
+  expect(ipc.writeTerminal).not.toHaveBeenCalled();
 });
 
 it('only releases backend output credits after xterm consumes a chunk', async () => {

@@ -20,10 +20,12 @@ export const TabBar: React.FC<TabBarProps> = ({ onOpenTerminalModal }) => {
     closeSession,
     setSplitMode,
     renameSession,
+    reorderSessions,
   } = useTerminalStore();
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
+  const [draggedId, setDraggedId] = useState<string | null>(null);
 
   const handleCloseSession = useCallback(
     async (id: string) => {
@@ -36,11 +38,33 @@ export const TabBar: React.FC<TabBarProps> = ({ onOpenTerminalModal }) => {
     [closeSession]
   );
 
-  // Global Ctrl+T shortcut: opens Directory & Launch Modal
+  // Global Ctrl+T / Ctrl+W / Ctrl+Tab / Ctrl+1..9 shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const key = e.key.toLowerCase();
-      if (!e.ctrlKey || (key !== 't' && key !== 'w')) return;
+      if (!e.ctrlKey || e.altKey || e.metaKey) return;
+      if (key === 'tab') {
+        if (sessions.length < 2) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (document.querySelector('[aria-modal="true"]')) return;
+        const index = sessions.findIndex((session) => session.id === activeSessionId);
+        const step = e.shiftKey ? -1 : 1;
+        const next = (index < 0 ? 0 : index + step + sessions.length) % sessions.length;
+        setActiveSession(sessions[next].id);
+        return;
+      }
+      // Ctrl+1..9 jumps straight to the tab at that position.
+      if (/^[1-9]$/.test(key)) {
+        const target = sessions[Number(key) - 1];
+        if (!target) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (document.querySelector('[aria-modal="true"]')) return;
+        setActiveSession(target.id);
+        return;
+      }
+      if (key !== 't' && key !== 'w') return;
       if (key === 'w' && useEditorStore.getState().workspaceView === 'editor') return;
       // Capture before xterm consumes the event; never send these app shortcuts
       // to the PTY or let WebView/Edge close a tab while a modal is open.
@@ -57,7 +81,7 @@ export const TabBar: React.FC<TabBarProps> = ({ onOpenTerminalModal }) => {
     };
     window.addEventListener('keydown', handleKeyDown, true);
     return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [activeSessionId, onOpenTerminalModal, handleCloseSession]);
+  }, [activeSessionId, onOpenTerminalModal, handleCloseSession, sessions, setActiveSession]);
 
   const handleStartRename = (id: string, currentTitle: string) => {
     setEditingId(id);
@@ -84,8 +108,28 @@ export const TabBar: React.FC<TabBarProps> = ({ onOpenTerminalModal }) => {
               key={session.id}
               onClick={() => setActiveSession(session.id)}
               onDoubleClick={() => handleStartRename(session.id, session.title)}
+              draggable={editingId !== session.id}
+              onDragStart={(e) => {
+                setDraggedId(session.id);
+                e.dataTransfer.effectAllowed = 'move';
+                // Firefox refuses to start a drag without payload.
+                e.dataTransfer.setData('text/plain', session.id);
+              }}
+              onDragOver={(e) => {
+                if (!draggedId || draggedId === session.id) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                if (draggedId && draggedId !== session.id) reorderSessions(draggedId, session.id);
+                setDraggedId(null);
+              }}
+              onDragEnd={() => setDraggedId(null)}
               title={session.exited ? `${session.title} — Process completed` : session.title}
               className={`group h-7 px-2.5 rounded flex items-center gap-2 text-xs cursor-pointer transition-all border shrink-0 max-w-[210px] ${
+                draggedId === session.id ? 'opacity-40' : ''
+              } ${
                 isActive
                   ? 'bg-orca-card border-orca-borderLight text-white font-medium'
                   : isSecondary

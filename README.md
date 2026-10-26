@@ -113,6 +113,11 @@ PowerShell, CMD, and standard Git Bash profiles report prompt directories throug
 | Ctrl+W | Close focused terminal tab, or active file in Editor |
 | Ctrl+S | Save the active file in Editor |
 | Ctrl+F in editor | Find text in the active file |
+| Ctrl+F in terminal | Find text in the focused terminal |
+| Ctrl+= / Ctrl+- / Ctrl+0 | Zoom terminal font in / out / reset |
+| Ctrl+Tab / Ctrl+Shift+Tab | Next / previous terminal tab |
+| Ctrl+1 … Ctrl+9 | Jump to terminal tab by position |
+| Drag a tab | Reorder terminal tabs |
 | Double click tab | Rename tab |
 | Double click titlebar | Maximize / restore |
 | Escape | Close a dialog when no operation is pending |
