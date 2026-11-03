@@ -20,3 +20,26 @@ it('ignores double-clicks on window controls, including SVG children', async () 
   fireEvent.doubleClick(screen.getByText('Vela'));
   await waitFor(() => expect(ipc.toggleMaximize).toHaveBeenCalledTimes(1));
 });
+
+it('keeps window control buttons flush with the top-right edge and uses macOS terminal badge colors', () => {
+  const { container } = render(<TitleBar />);
+  const header = container.querySelector('header')!;
+  expect(header.className).toContain('pr-0');
+
+  const controlsGroup = screen.getByRole('group', { name: 'Window controls' });
+  expect(controlsGroup.className).toContain('h-full');
+  expect(controlsGroup.className).toContain('items-stretch');
+
+  const minimizeBtn = screen.getByTitle('Minimize');
+  const maximizeBtn = screen.getByTitle('Maximize');
+  const closeBtn = screen.getByTitle('Close');
+
+  for (const btn of [minimizeBtn, maximizeBtn, closeBtn]) {
+    expect(btn.className).toContain('h-full');
+    expect(btn.className).toContain('rounded-none');
+  }
+
+  expect(minimizeBtn.querySelector('span')?.className).toContain('bg-[#FEBC2E]');
+  expect(maximizeBtn.querySelector('span')?.className).toContain('bg-[#28C840]');
+  expect(closeBtn.querySelector('span')?.className).toContain('bg-[#FF5F57]');
+});
