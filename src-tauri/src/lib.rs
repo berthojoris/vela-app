@@ -14,7 +14,9 @@ pub mod pty;
 
 use agent::supervisor::AgentSupervisor;
 use git::worktree::GitManager;
-use models::{AgentType, FileDiff, GitWorktree, ShellProfile, TerminalSession, WorktreeChanges};
+use models::{
+    AgentType, FileDiff, GitBranch, GitWorktree, ShellProfile, TerminalSession, WorktreeChanges,
+};
 use models::{DirectoryListing, TextFile};
 use pty::manager::PtyManager;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -240,6 +242,26 @@ async fn remove_worktree(
 ) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
         GitManager::remove_worktree(&repo_path, &worktree_path, force)
+    })
+    .await
+    .map_err(|e| format!("Task execution error: {}", e))?
+}
+
+#[tauri::command]
+async fn list_branches(worktree_path: String) -> Result<Vec<GitBranch>, String> {
+    tokio::task::spawn_blocking(move || GitManager::list_branches(&worktree_path))
+        .await
+        .map_err(|e| format!("Task execution error: {}", e))?
+}
+
+#[tauri::command]
+async fn switch_branch(
+    worktree_path: String,
+    branch: String,
+    stash_changes: bool,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        GitManager::switch_branch(&worktree_path, &branch, stash_changes)
     })
     .await
     .map_err(|e| format!("Task execution error: {}", e))?
@@ -474,6 +496,8 @@ pub fn run() {
             read_worktree_branches,
             create_worktree,
             remove_worktree,
+            list_branches,
+            switch_branch,
             get_worktree_diff,
             get_worktree_changes,
             commit_worktree,

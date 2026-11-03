@@ -7,6 +7,7 @@ import {
   DirectoryListing,
   TextFile,
   FileDiff,
+  GitBranch,
   GitWorktree,
   ShellProfile,
   TerminalSession,
@@ -150,6 +151,20 @@ export const tauriIpc = {
   async removeWorktree(repoPath: string, worktreePath: string, force: boolean = false): Promise<void> {
     if (!isTauri()) return;
     await invoke('remove_worktree', { repoPath, worktreePath, force });
+  },
+
+  async listBranches(worktreePath: string): Promise<GitBranch[]> {
+    if (!isTauri()) return [];
+    return await invoke<GitBranch[]>('list_branches', { worktreePath });
+  },
+
+  /**
+   * Switches a worktree to an existing local branch. With `stashChanges`, uncommitted
+   * work is stashed first and re-applied after the switch (stash push, switch, pop).
+   */
+  async switchBranch(worktreePath: string, branch: string, stashChanges: boolean): Promise<void> {
+    if (!isTauri()) return;
+    await invoke('switch_branch', { worktreePath, branch, stashChanges });
   },
 
   async getWorktreeDiff(worktreePath: string): Promise<FileDiff[]> {

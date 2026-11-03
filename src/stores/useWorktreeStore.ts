@@ -34,6 +34,7 @@ interface WorktreeState {
   syncWithSession: (session?: { cwd?: string; worktree_id?: string | null } | null) => Promise<void>;
   createWorktree: (branch: string, baseBranch?: string) => Promise<GitWorktree>;
   removeWorktree: (worktreePath: string, force?: boolean) => Promise<void>;
+  switchBranch: (worktreePath: string, branch: string, stashChanges: boolean) => Promise<void>;
   selectWorktree: (id: string) => void;
   clearError: () => void;
 }
@@ -389,6 +390,41 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
             ? get().activeWorktreeId
             : (list[0]?.id ?? null),
         });
+      }
+    } catch (error) {
+      if (context === syncSequence) set({ error: errorMessage(error) });
+      throw error;
+    } finally {
+      set({ isMutating: false });
+    }
+  },
+  /**
+   * Checks out another branch in a worktree, then refreshes the list with status so the
+   * card label, dirty count, and changed-files panel describe the new branch. A failed
+   * post-switch refresh is reported separately from the (successful) switch, mirroring
+   * how createWorktree distinguishes the write from the refresh.
+   */
+  switchBranch: async (worktreePath, branch, stashChanges) => {
+    const { repoPath, isMutating } = get();
+    if (!repoPath) throw new Error('No repository selected. Open a terminal inside a Git repository.');
+    if (isMutating) throw new Error('Another worktree operation is running. Please wait.');
+    const context = syncSequence;
+    ++refreshSequence;
+    pendingRefresh = null;
+    set({ isMutating: true, error: null });
+    try {
+      await tauriIpc.switchBranch(worktreePath, branch, stashChanges);
+      invalidateChanges(worktreePath);
+      if (context === syncSequence && get().repoPath === repoPath) {
+        try {
+          const list = await tauriIpc.listWorktrees(repoPath, true);
+          if (context === syncSequence && get().repoPath === repoPath) {
+            cacheWorktreeList(repoPath, list);
+            set({ worktrees: list, statusRevision: get().statusRevision + 1 });
+          }
+        } catch (error) {
+          if (context === syncSequence) set({ error: `Branch switched, but refresh failed: ${errorMessage(error)}` });
+        }
       }
     } catch (error) {
       if (context === syncSequence) set({ error: errorMessage(error) });

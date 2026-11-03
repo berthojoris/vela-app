@@ -27,6 +27,13 @@ export interface GitWorktree {
   active_agent_name: string | null;
 }
 
+export interface GitBranch {
+  name: string;
+  is_current: boolean;
+  /** Path of the worktree where this branch is checked out, if any. */
+  checked_out_at: string | null;
+}
+
 export interface FileDiff {
   path: string;
   status: string; // "M", "A", "D", "R"

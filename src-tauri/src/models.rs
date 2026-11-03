@@ -60,6 +60,15 @@ pub struct GitWorktree {
     pub active_agent_name: Option<String>,
 }
 
+/// A local branch and its checkout state across the repository's worktrees.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct GitBranch {
+    pub name: String,
+    pub is_current: bool,
+    /// Path of the worktree where this branch is checked out, if any.
+    pub checked_out_at: Option<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FileDiff {
     pub path: String,

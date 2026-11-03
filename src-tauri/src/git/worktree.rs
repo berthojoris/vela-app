@@ -1,4 +1,4 @@
-use crate::models::{ChangedFile, FileDiff, GitWorktree, WorktreeChanges};
+use crate::models::{ChangedFile, FileDiff, GitBranch, GitWorktree, WorktreeChanges};
 use crate::process::{hidden_command, output};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -273,6 +273,156 @@ impl GitManager {
             .iter()
             .map(|path| Self::read_head_branch(path))
             .collect()
+    }
+
+    /// Local branches of the repository, annotated with where each is checked out.
+    ///
+    /// `is_current` comes from the worktree's HEAD file rather than `git branch` output so
+    /// the marker is right even while another process is mid-switch. A branch that is checked
+    /// out in any worktree (including this one) carries that worktree's path, because Git
+    /// refuses to check the same branch out twice.
+    pub fn list_branches(worktree_path: &str) -> Result<Vec<GitBranch>, String> {
+        let path = Self::directory(worktree_path)?;
+        let result = Self::checked(Self::run(
+            Self::git_cmd().args(["-C", &path, "branch", "--list", "--format=%(refname:short)"]),
+            1024 * 1024,
+        )?)?;
+        let current = Self::read_head_branch(&path);
+        let checkouts: HashMap<String, String> = Self::list_worktrees(&path, false)?
+            .into_iter()
+            .filter(|worktree| worktree.branch != "detached")
+            .map(|worktree| (worktree.branch, worktree.path))
+            .collect();
+        Ok(String::from_utf8_lossy(&result.stdout)
+            .lines()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(|name| GitBranch {
+                name: name.to_string(),
+                is_current: current.as_deref() == Some(name),
+                checked_out_at: checkouts.get(name).cloned(),
+            })
+            .collect())
+    }
+
+    /// Switches this worktree to an existing local branch.
+    ///
+    /// With `stash_changes`, uncommitted work (including untracked files) is stashed first
+    /// and re-applied after the switch: stash push, git switch, stash pop. A failed pop
+    /// keeps the entry on the stash stack and says so; work is never dropped silently. The
+    /// stash ref is compared before and after the push, so a no-op push (changes vanished
+    /// in between) can never pop an unrelated older stash.
+    pub fn switch_branch(
+        worktree_path: &str,
+        branch: &str,
+        stash_changes: bool,
+    ) -> Result<(), String> {
+        let path = Self::directory(worktree_path)?;
+        let _operation = Mutation::repository(&path)?;
+        let branch = branch.trim();
+        if branch.is_empty()
+            || branch.len() > 200
+            || branch.starts_with('-')
+            || branch.contains('\\')
+            || branch.chars().any(char::is_control)
+        {
+            return Err("Invalid Git branch name.".into());
+        }
+        let exists = Self::run(
+            Self::git_cmd().args([
+                "-C",
+                &path,
+                "show-ref",
+                "--verify",
+                &format!("refs/heads/{branch}"),
+            ]),
+            64 * 1024,
+        )?
+        .status
+        .success();
+        if !exists {
+            return Err(format!("Branch does not exist: {branch}"));
+        }
+        if Self::read_head_branch(&path).as_deref() == Some(branch) {
+            return Err(format!("This worktree is already on {branch}."));
+        }
+        if let Some(occupied) = Self::list_worktrees(&path, false)?
+            .into_iter()
+            .find(|worktree| worktree.branch == branch)
+        {
+            return Err(format!(
+                "'{branch}' is already checked out at {}. Switch that worktree instead.",
+                occupied.path
+            ));
+        }
+        let mut stashed = false;
+        if stash_changes && !Self::status(&path)?.is_empty() {
+            if !Self::has_head(&path)? {
+                return Err("This repository has no commits yet. Commit the current files before switching branches.".into());
+            }
+            let stash_ref = |path: &str| {
+                Self::run(
+                    Self::git_cmd().args(["-C", path, "rev-parse", "-q", "--verify", "refs/stash"]),
+                    64 * 1024,
+                )
+                .ok()
+                .filter(|result| result.status.success())
+                .map(|result| String::from_utf8_lossy(&result.stdout).trim().to_string())
+            };
+            let before = stash_ref(&path);
+            let message = format!("vela: auto-stash before switching to {branch}");
+            // Stash needs wildcard pathspecs internally; GIT_LITERAL_PATHSPECS would keep
+            // untracked files in the worktree and make the later pop fail on checkout.
+            Self::checked(Self::run(
+                Self::git_cmd().env_remove("GIT_LITERAL_PATHSPECS").args([
+                    "-C",
+                    &path,
+                    "stash",
+                    "push",
+                    "--include-untracked",
+                    "-m",
+                    &message,
+                ]),
+                1024 * 1024,
+            )?)?;
+            stashed = stash_ref(&path).is_some_and(|after| Some(&after) != before.as_ref());
+        }
+        if let Err(error) = Self::checked(output(
+            Self::git_cmd().args(["-C", &path, "switch", branch]),
+            Duration::from_secs(120),
+            256 * 1024,
+        )?) {
+            if stashed {
+                // Best effort: put the stashed work back so nothing sits stranded on the stack.
+                let restored = Self::run(
+                    Self::git_cmd()
+                        .env_remove("GIT_LITERAL_PATHSPECS")
+                        .args(["-C", &path, "stash", "pop"]),
+                    1024 * 1024,
+                )
+                .and_then(Self::checked);
+                return Err(match restored {
+                    Ok(_) => format!("{error}\nYour stashed changes were restored to the current branch."),
+                    Err(restore) => format!("{error}\nRe-applying the stash also failed: {restore}\nYour changes are still on the stash stack (git stash list)."),
+                });
+            }
+            return Err(error);
+        }
+        if stashed {
+            if let Err(error) = Self::run(
+                Self::git_cmd()
+                    .env_remove("GIT_LITERAL_PATHSPECS")
+                    .args(["-C", &path, "stash", "pop"]),
+                1024 * 1024,
+            )
+            .and_then(Self::checked)
+            {
+                return Err(format!(
+                    "Switched to {branch}, but re-applying the stashed changes failed: {error}\nYour changes are still on the stash stack (git stash list). Resolve the conflict, then run git stash drop when done."
+                ));
+            }
+        }
+        Ok(())
     }
 
     pub fn create_worktree(
@@ -1068,6 +1218,117 @@ mod tests {
         assert!(Mutation::begin("c:/unique-test-repo").is_err());
         drop(guard);
         assert!(Mutation::begin("c:/unique-test-repo").is_ok());
+    }
+
+    #[test]
+    fn real_git_branch_switch_lifecycle() {
+        // All writes/removals are restricted to this test's unique temporary directory.
+        struct Scratch(std::path::PathBuf);
+        impl Drop for Scratch {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let root = std::env::var_os("LOCALAPPDATA")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir)
+            .join("Temp/opencode")
+            .join(format!("vela-switch-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("repo")).unwrap();
+        let scratch = Scratch(root);
+        let path = scratch.0.join("repo").to_string_lossy().replace('\\', "/");
+        let run = |args: &[&str]| {
+            GitManager::checked(
+                GitManager::run(
+                    GitManager::git_cmd().arg("-C").arg(&path).args(args),
+                    256 * 1024,
+                )
+                .unwrap(),
+            )
+            .unwrap()
+        };
+        run(&["init", "-b", "main"]);
+        run(&["config", "user.name", "Vela Test"]);
+        run(&["config", "user.email", "vela-test@example.invalid"]);
+        run(&["config", "commit.gpgsign", "false"]);
+        run(&["config", "core.autocrlf", "false"]);
+        let hooks = scratch.0.join("hooks");
+        std::fs::create_dir(&hooks).unwrap();
+        run(&["config", "core.hooksPath", &hooks.to_string_lossy()]);
+        std::fs::write(scratch.0.join("repo/tracked.txt"), "original\n").unwrap();
+        GitManager::commit_worktree(&path, "initial").unwrap();
+        run(&["branch", "feat/switch"]);
+
+        // Listing annotates the current branch and free branches.
+        let branches = GitManager::list_branches(&path).unwrap();
+        assert_eq!(
+            branches
+                .iter()
+                .map(|branch| branch.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["feat/switch", "main"]
+        );
+        let main = branches
+            .iter()
+            .find(|branch| branch.name == "main")
+            .unwrap();
+        assert!(main.is_current);
+        assert_eq!(main.checked_out_at.as_deref(), Some(path.as_str()));
+        let free = branches
+            .iter()
+            .find(|branch| branch.name == "feat/switch")
+            .unwrap();
+        assert!(!free.is_current);
+        assert_eq!(free.checked_out_at, None);
+
+        // Unknown, current, invalid, and occupied targets are rejected before any write.
+        assert!(GitManager::switch_branch(&path, "missing", false).is_err());
+        assert!(GitManager::switch_branch(&path, "main", false).is_err());
+        assert!(GitManager::switch_branch(&path, "--invalid", false).is_err());
+        let occupied = GitManager::create_worktree(&path, "feat/occupied", None).unwrap();
+        assert!(GitManager::switch_branch(&path, "feat/occupied", false).is_err());
+        GitManager::remove_worktree(&path, &occupied.path, false).unwrap();
+
+        // Dirty tracked and untracked work rides along through stash, switch, and pop.
+        std::fs::write(scratch.0.join("repo/tracked.txt"), "work in progress\n").unwrap();
+        std::fs::write(scratch.0.join("repo/untracked.txt"), "new file\n").unwrap();
+        GitManager::switch_branch(&path, "feat/switch", true).unwrap();
+        assert_eq!(
+            GitManager::read_head_branch(&path).as_deref(),
+            Some("feat/switch")
+        );
+        assert_eq!(
+            std::fs::read_to_string(scratch.0.join("repo/tracked.txt")).unwrap(),
+            "work in progress\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(scratch.0.join("repo/untracked.txt")).unwrap(),
+            "new file\n"
+        );
+        // The auto-stash was popped, not left on the stack.
+        let stash_list = run(&["stash", "list"]);
+        assert!(String::from_utf8_lossy(&stash_list.stdout)
+            .trim()
+            .is_empty());
+
+        // A clean switch with stash requested creates no stash entry.
+        GitManager::reset_worktree(&path).unwrap();
+        GitManager::switch_branch(&path, "main", true).unwrap();
+        assert_eq!(GitManager::read_head_branch(&path).as_deref(), Some("main"));
+        let stash_list = run(&["stash", "list"]);
+        assert!(String::from_utf8_lossy(&stash_list.stdout)
+            .trim()
+            .is_empty());
+
+        // The branch list follows the new HEAD.
+        let branches = GitManager::list_branches(&path).unwrap();
+        assert!(
+            branches
+                .iter()
+                .find(|branch| branch.name == "main")
+                .unwrap()
+                .is_current
+        );
     }
 
     #[test]

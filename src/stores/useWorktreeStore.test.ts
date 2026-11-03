@@ -9,6 +9,7 @@ const ipc = vi.hoisted(() => ({
   readWorktreeBranches: vi.fn(),
   createWorktree: vi.fn(),
   removeWorktree: vi.fn(),
+  switchBranch: vi.fn(),
 }));
 vi.mock('../lib/tauriIpc', () => ({ tauriIpc: ipc }));
 import { normalizePath, useWorktreeStore as store } from './useWorktreeStore';
@@ -374,6 +375,59 @@ describe('branch labels follow git switch/checkout', () => {
     expect(store.getState().worktrees[0].branch).toBe('feat/next');
     await vi.waitFor(() => expect(ipc.listWorktrees).toHaveBeenCalledWith('C:/A', true));
     expect(store.getState().worktrees[0].dirty_files_count).toBe(0);
+  });
+});
+
+describe('switchBranch', () => {
+  it('switches a branch, invalidates cached changes, and refreshes labels and status', async () => {
+    store.setState({ repoPath: 'C:/A', worktrees: [worktree('A', 'C:/A')], activeWorktreeId: 'A' });
+    cacheChanges('C:/A', { total: 2, files: [] });
+    ipc.switchBranch.mockResolvedValue(undefined);
+    ipc.listWorktrees.mockResolvedValue([{ ...worktree('A', 'C:/A'), branch: 'feat/next', dirty_files_count: 1 }]);
+    const before = store.getState().statusRevision;
+
+    await store.getState().switchBranch('C:/A', 'feat/next', true);
+
+    expect(ipc.switchBranch).toHaveBeenCalledWith('C:/A', 'feat/next', true);
+    expect(getCachedChanges('C:/A')).toBeUndefined();
+    expect(store.getState().worktrees[0].branch).toBe('feat/next');
+    expect(store.getState().statusRevision).toBe(before + 1);
+    expect(store.getState().isMutating).toBe(false);
+  });
+
+  it('keeps a successful switch visible when the refresh afterwards fails', async () => {
+    store.setState({ repoPath: 'C:/A', worktrees: [worktree('A', 'C:/A')] });
+    ipc.switchBranch.mockResolvedValue(undefined);
+    ipc.listWorktrees.mockRejectedValue('offline');
+
+    await expect(store.getState().switchBranch('C:/A', 'feat/next', false)).resolves.toBeUndefined();
+    expect(store.getState().error).toContain('switched');
+    expect(store.getState().worktrees[0].branch).toBe('A');
+  });
+
+  it('rejects a failed switch without touching the worktree list', async () => {
+    store.setState({ repoPath: 'C:/A', worktrees: [worktree('A', 'C:/A')] });
+    ipc.switchBranch.mockRejectedValue('already checked out');
+
+    await expect(store.getState().switchBranch('C:/A', 'feat/x', false)).rejects.toBe('already checked out');
+    expect(store.getState().error).toContain('already checked out');
+    expect(ipc.listWorktrees).not.toHaveBeenCalled();
+    expect(store.getState().isMutating).toBe(false);
+  });
+
+  it('refuses a second switch while one is still running', async () => {
+    store.setState({ repoPath: 'C:/A', worktrees: [worktree('A', 'C:/A')] });
+    const pending = deferred<void>();
+    ipc.switchBranch.mockReturnValue(pending.promise);
+    ipc.listWorktrees.mockResolvedValue([worktree('A', 'C:/A')]);
+    const first = store.getState().switchBranch('C:/A', 'feat/a', false);
+
+    await expect(store.getState().switchBranch('C:/A', 'feat/b', false)).rejects.toThrow('Please wait');
+    expect(ipc.switchBranch).toHaveBeenCalledTimes(1);
+
+    pending.resolve();
+    await first;
+    expect(store.getState().isMutating).toBe(false);
   });
 });
 

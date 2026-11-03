@@ -6,6 +6,7 @@ import {
   Terminal,
   FileCode2,
   FolderOpen,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   RefreshCw,
@@ -20,6 +21,7 @@ import { useWorktreeStore } from '../../stores/useWorktreeStore';
 import { useTerminalStore } from '../../stores/useTerminalStore';
 import { useDiffStore } from '../../stores/useDiffStore';
 import { ChangedFilesPanel } from './ChangedFilesPanel';
+import { BranchSwitcherModal } from '../modals/BranchSwitcherModal';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { errorMessage } from '../../lib/errors';
 import { useNoticeStore } from '../../stores/useNoticeStore';
@@ -42,6 +44,7 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
   const [explorerRoot, setExplorerRoot] = useState<string | null>(null);
   const [choosingFolder, setChoosingFolder] = useState(false);
   const [launchingWorktree, setLaunchingWorktree] = useState<string | null>(null);
+  const [branchSwitcher, setBranchSwitcher] = useState<{ path: string; branch: string } | null>(null);
   const [copiedPath, setCopiedPath] = useState<string | null>(null);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const choosingRef = useRef(false);
@@ -422,7 +425,20 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
                             <GitBranch
                               className={`w-3.5 h-3.5 shrink-0 ${wt.is_main ? 'text-orca-accent' : 'text-orca-emerald'}`}
                             />
-                            <span className="font-semibold text-white truncate text-[11px]">{wt.branch}</span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setBranchSwitcher({ path: wt.path, branch: wt.branch });
+                              }}
+                              className="group/branch flex items-center gap-0.5 min-w-0 rounded px-1 -mx-1 hover:bg-orca-hover transition-colors cursor-pointer"
+                              title={`Switch branch in ${wt.name} (current: ${wt.branch})`}
+                              aria-label={`Switch branch in ${wt.name}, current branch ${wt.branch}`}
+                              aria-haspopup="dialog"
+                            >
+                              <span className="font-semibold text-white truncate text-[11px]">{wt.branch}</span>
+                              <ChevronDown className="w-3 h-3 shrink-0 text-orca-muted opacity-0 group-hover/branch:opacity-100 group-focus-visible/branch:opacity-100 transition-opacity" />
+                            </button>
                           </div>
 
                           {wt.is_main && (
@@ -604,6 +620,7 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
           )}
         </div>
       </aside>
+      <BranchSwitcherModal worktree={branchSwitcher} onClose={() => setBranchSwitcher(null)} />
       {removal && (
         <ConfirmDialog
           title={`Remove ${removal.branch}?`}
