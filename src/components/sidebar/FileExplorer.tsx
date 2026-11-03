@@ -13,9 +13,36 @@ interface FolderState {
   error?: string;
 }
 
+const MAX_CACHED_FOLDERS = 64;
+
+function pruneFolders(
+  folders: Record<string, FolderState>,
+  expanded: Set<string>,
+  keepPath?: string
+): Record<string, FolderState> {
+  const keys = Object.keys(folders);
+  if (keys.length <= MAX_CACHED_FOLDERS) return folders;
+  const next: Record<string, FolderState> = {};
+  for (const key of keys) {
+    if (key === '' || key === keepPath || expanded.has(key) || folders[key]?.loading) {
+      next[key] = folders[key];
+    }
+  }
+  const remainingBudget = MAX_CACHED_FOLDERS - Object.keys(next).length;
+  if (remainingBudget > 0) {
+    const inactiveKeys = keys.filter((key) => !(key in next));
+    for (const key of inactiveKeys.slice(-remainingBudget)) {
+      next[key] = folders[key];
+    }
+  }
+  return next;
+}
+
 export function FileExplorer({ root, enabled = true }: { root: string | null; enabled?: boolean }) {
   const [folders, setFolders] = useState<Record<string, FolderState>>({});
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(['']));
+  const expandedRef = useRef(expanded);
+  expandedRef.current = expanded;
   const [selected, setSelected] = useState<string | null>(null);
   const requests = useRef(new Map<string, object>());
   const mounted = useRef(false);
@@ -27,15 +54,25 @@ export function FileExplorer({ root, enabled = true }: { root: string | null; en
     if (!root) return;
     const token = {};
     requests.current.set(path, token);
-    setFolders((old) => ({ ...old, [path]: { ...old[path], loading: true, error: undefined } }));
+    setFolders((old) =>
+      pruneFolders({ ...old, [path]: { ...old[path], loading: true, error: undefined } }, expandedRef.current, path)
+    );
     try {
       const listing = await tauriIpc.listDirectory(root, path);
       if (mounted.current && requests.current.get(path) === token) {
-        setFolders((old) => ({ ...old, [path]: { listing, loading: false } }));
+        requests.current.delete(path);
+        setFolders((old) => pruneFolders({ ...old, [path]: { listing, loading: false } }, expandedRef.current, path));
       }
     } catch (error) {
       if (mounted.current && requests.current.get(path) === token) {
-        setFolders((old) => ({ ...old, [path]: { ...old[path], loading: false, error: errorMessage(error) } }));
+        requests.current.delete(path);
+        setFolders((old) =>
+          pruneFolders(
+            { ...old, [path]: { ...old[path], loading: false, error: errorMessage(error) } },
+            expandedRef.current,
+            path
+          )
+        );
       }
     }
   };
@@ -54,13 +91,17 @@ export function FileExplorer({ root, enabled = true }: { root: string | null; en
   }, [enabled]);
 
   const toggle = (path: string) => {
-    setExpanded((old) => {
-      const next = new Set(old);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
-      return next;
-    });
-    if (!expanded.has(path) && !folders[path]?.listing && !folders[path]?.loading) void load(path);
+    const next = new Set(expanded);
+    const openingFolder = !next.has(path);
+    if (openingFolder) next.add(path);
+    else next.delete(path);
+    expandedRef.current = next;
+    setExpanded(next);
+    if (openingFolder) {
+      if (!folders[path]?.listing && !folders[path]?.loading) void load(path);
+    } else {
+      setFolders((old) => pruneFolders(old, next));
+    }
   };
 
   const renderFolder = (path: string, depth: number): React.ReactNode => {

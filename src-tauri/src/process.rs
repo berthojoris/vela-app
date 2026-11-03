@@ -40,10 +40,12 @@ fn capture<R: Read + Send + 'static>(
                         bytes.extend_from_slice(&buffer[..size.min(remaining)]);
                         if size > remaining {
                             exceeded.store(true, Ordering::Release);
+                            break;
                         }
                     }
                 }
             }
+            drop(reader);
             let _ = tx.send(Ok(bytes));
         })
         .map_err(|error| format!("Cannot start command output worker: {error}"))?;

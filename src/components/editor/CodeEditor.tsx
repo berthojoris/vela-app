@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { basicSetup } from 'codemirror';
-import { Compartment, EditorState } from '@codemirror/state';
+import { Compartment, EditorState, type Text } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { indentWithTab } from '@codemirror/commands';
 import { keymap } from '@codemirror/view';
@@ -41,6 +41,7 @@ export function CodeEditor({ document, active }: { document: EditorDocument; act
   const [languageName, setLanguageName] = useState('Plain text');
   useEffect(() => {
     const language = new Compartment();
+    let savedDoc: Text | null = null;
     const editor = new EditorView({
       parent: host.current!,
       state: EditorState.create({
@@ -54,7 +55,9 @@ export function CodeEditor({ document, active }: { document: EditorDocument; act
           language.of([]),
           EditorView.contentAttributes.of({ 'aria-label': `Edit ${document.path}`, spellcheck: 'false' }),
           EditorView.updateListener.of((update) => {
-            if (update.docChanged) useEditorStore.getState().updateContent(document.id, update.state.doc.toString());
+            if (update.docChanged && savedDoc) {
+              useEditorStore.getState().setDirty(document.id, !update.state.doc.eq(savedDoc));
+            }
             if (update.selectionSet || update.docChanged) {
               const head = update.state.selection.main.head;
               const line = update.state.doc.lineAt(head);
@@ -64,7 +67,20 @@ export function CodeEditor({ document, active }: { document: EditorDocument; act
         ],
       }),
     });
+    savedDoc = editor.state.doc;
     view.current = editor;
+    const unregisterEditor = useEditorStore.getState().registerEditor(document.id, {
+      readSnapshot: () => {
+        const snapshot = editor.state.doc;
+        return {
+          content: snapshot.toString(),
+          commitSave: () => {
+            savedDoc = snapshot;
+            return !editor.state.doc.eq(snapshot);
+          },
+        };
+      },
+    });
     let disposed = false;
     const description = LanguageDescription.matchFilename(languages, document.path);
     if (description) {
@@ -82,6 +98,7 @@ export function CodeEditor({ document, active }: { document: EditorDocument; act
     }
     return () => {
       disposed = true;
+      unregisterEditor();
       editor.destroy();
       view.current = null;
     };

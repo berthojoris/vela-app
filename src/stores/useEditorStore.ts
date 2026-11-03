@@ -10,8 +10,17 @@ export interface EditorDocument extends TextFile {
   root: string;
   path: string;
   savedContent: string;
+  dirty?: boolean;
   saving: boolean;
   error: string | null;
+}
+
+export interface EditorSnapshotHandle {
+  readSnapshot: () => {
+    content: string;
+    /** Marks the snapshot as saved in the live editor and returns whether newer edits exist. */
+    commitSave: () => boolean;
+  };
 }
 
 interface EditorState {
@@ -23,14 +32,17 @@ interface EditorState {
   activate: (id: string) => void;
   openFile: (root: string, path: string) => Promise<void>;
   updateContent: (id: string, content: string) => void;
+  setDirty: (id: string, dirty: boolean) => void;
+  registerEditor: (id: string, handle: EditorSnapshotHandle) => () => void;
   saveFile: (id: string) => Promise<boolean>;
   closeFile: (id: string, discard?: boolean) => boolean;
 }
 
 export const fileKey = (root: string, path: string) =>
   `${root.replace(/\\/g, '/').replace(/\/+$/, '')}/${path}`.toLowerCase();
-export const isDirty = (doc: EditorDocument) => doc.content !== doc.savedContent;
+export const isDirty = (doc: EditorDocument) => doc.dirty ?? doc.content !== doc.savedContent;
 const saves = new Map<string, Promise<boolean>>();
+const editors = new Map<string, EditorSnapshotHandle>();
 let openSequence = 0;
 
 export const useEditorStore = create<EditorState>((set, get) => ({
@@ -69,7 +81,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       set((state) => ({
         documents: [
           ...state.documents,
-          { ...file, id, root, path, savedContent: file.content, saving: false, error: null },
+          { ...file, id, root, path, savedContent: file.content, dirty: false, saving: false, error: null },
         ],
         ...(request === openSequence ? { activeDocumentId: id, workspaceView: 'editor' as const } : {}),
       }));
@@ -81,34 +93,63 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
   updateContent: (id, content) =>
     set((state) => ({
-      documents: state.documents.map((doc) => (doc.id === id ? { ...doc, content } : doc)),
+      documents: state.documents.map((doc) =>
+        doc.id === id ? { ...doc, content, dirty: content !== doc.savedContent } : doc
+      ),
     })),
+  setDirty: (id, dirty) =>
+    set((state) => {
+      const doc = state.documents.find((item) => item.id === id);
+      if (!doc || isDirty(doc) === dirty) return state;
+      return {
+        documents: state.documents.map((item) => (item.id === id ? { ...item, dirty } : item)),
+      };
+    }),
+  registerEditor: (id, handle) => {
+    editors.set(id, handle);
+    // CodeMirror owns the document rope while mounted; release duplicate store strings.
+    set((state) => ({
+      documents: state.documents.map((doc) =>
+        doc.id === id ? { ...doc, content: '', savedContent: '', dirty: isDirty(doc) } : doc
+      ),
+    }));
+    return () => {
+      if (editors.get(id) === handle) editors.delete(id);
+    };
+  },
   saveFile: (id) => {
     const pending = saves.get(id);
     if (pending) return pending;
     const doc = get().documents.find((item) => item.id === id);
     if (!doc) return Promise.resolve(false);
     if (!isDirty(doc)) return Promise.resolve(true);
+    const liveSnapshot = editors.get(id)?.readSnapshot();
+    const contentToSave = liveSnapshot ? liveSnapshot.content : doc.content;
     set((state) => ({
       documents: state.documents.map((item) => (item.id === id ? { ...item, saving: true, error: null } : item)),
     }));
     const promise = (async () => {
       try {
-        const saved = await tauriIpc.saveTextFile(doc.root, doc.path, doc.content, doc.revision);
+        const saved = await tauriIpc.saveTextFile(doc.root, doc.path, contentToSave, doc.revision);
+        const stillDirty = liveSnapshot ? liveSnapshot.commitSave() : undefined;
         set((state) => ({
-          documents: state.documents.map((item) =>
-            item.id === id
-              ? {
-                  ...item,
-                  revision: saved.revision,
-                  line_ending: saved.line_ending,
-                  has_bom: saved.has_bom,
-                  savedContent: doc.content,
-                  saving: false,
-                  error: null,
-                }
-              : item
-          ),
+          documents: state.documents.map((item) => {
+            if (item.id !== id) return item;
+            const hasLiveEditor = editors.has(id);
+            const nextSavedContent = hasLiveEditor ? '' : contentToSave;
+            const nextContent = hasLiveEditor ? '' : item.content;
+            return {
+              ...item,
+              revision: saved.revision,
+              line_ending: saved.line_ending,
+              has_bom: saved.has_bom,
+              content: nextContent,
+              savedContent: nextSavedContent,
+              dirty: stillDirty ?? nextContent !== nextSavedContent,
+              saving: false,
+              error: null,
+            };
+          }),
         }));
         void useWorktreeStore.getState().refreshWorktrees(true, true);
         return true;
@@ -129,6 +170,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   closeFile: (id, discard = false) => {
     const doc = get().documents.find((item) => item.id === id);
     if (!doc || doc.saving || (isDirty(doc) && !discard)) return false;
+    editors.delete(id);
     set((state) => {
       const index = state.documents.findIndex((item) => item.id === id);
       const documents = state.documents.filter((item) => item.id !== id);

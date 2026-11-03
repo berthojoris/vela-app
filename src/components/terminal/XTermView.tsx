@@ -19,13 +19,15 @@ import {
 interface XTermViewProps {
   sessionId: string;
   isActive: boolean;
+  isVisible?: boolean;
 }
 
-export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive }) => {
+export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive, isVisible = true }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const searchAddonRef = useRef<SearchAddon | null>(null);
+  const webglCleanupRef = useRef<(() => void) | null>(null);
   const searchOpenRef = useRef(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [streamError, setStreamError] = useState<string | null>(null);
@@ -106,20 +108,6 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive }) => 
         .catch((error) => useNoticeStore.getState().report('Unable to stop terminal after renderer failure', error));
       return;
     }
-
-    // Load the optional renderer separately; a GPU failure must not kill a usable terminal.
-    void import('@xterm/addon-webgl')
-      .then(({ WebglAddon }) => {
-        if (disposed) return;
-        try {
-          const addon = new WebglAddon();
-          addon.onContextLoss(() => addon.dispose());
-          term.loadAddon(addon);
-        } catch (error) {
-          console.warn('Using the standard terminal renderer', error);
-        }
-      })
-      .catch((error) => console.warn('WebGL is unavailable; using the standard terminal renderer', error));
 
     termRef.current = term;
     fitAddonRef.current = fitAddon;
@@ -291,6 +279,20 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive }) => 
     let unlistenPtyOutput: (() => void) | null = null;
     let unlistenPtyExit: (() => void) | null = null;
     let unlistenPtyError: (() => void) | null = null;
+    const cleanupPtyListeners = () => {
+      if (unlistenPtyOutput) {
+        unlistenPtyOutput();
+        unlistenPtyOutput = null;
+      }
+      if (unlistenPtyExit) {
+        unlistenPtyExit();
+        unlistenPtyExit = null;
+      }
+      if (unlistenPtyError) {
+        unlistenPtyError();
+        unlistenPtyError = null;
+      }
+    };
 
     const connectPty = async () => {
       try {
@@ -303,7 +305,7 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive }) => 
             });
           }
         });
-        if (disposed) {
+        if (disposed || exited) {
           outputUnlisten();
           return;
         }
@@ -313,10 +315,13 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive }) => 
           if (disposed) return;
           exited = true;
           queuedInput = '';
+          cleanupPtyListeners();
+          cwdHandler.dispose();
+          onDataDisposable.dispose();
           term.writeln(`\r\n\x1b[90m[Process completed${code == null ? '' : `, exit code ${code}`}]\x1b[0m`);
           useTerminalStore.getState().markSessionExited(sessionId);
         });
-        if (disposed) {
+        if (disposed || exited) {
           exitUnlisten();
           return;
         }
@@ -329,7 +334,7 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive }) => 
             .killTerminal(sessionId)
             .catch((error) => useNoticeStore.getState().report('Unable to stop failed terminal', error));
         });
-        if (disposed) {
+        if (disposed || exited) {
           errorUnlisten();
           return;
         }
@@ -367,16 +372,54 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive }) => 
       onDataDisposable.dispose();
       container.removeEventListener('paste', handlePaste, true);
       resizeObserver.disconnect();
-      if (unlistenPtyOutput) unlistenPtyOutput();
-      if (unlistenPtyExit) unlistenPtyExit();
-      if (unlistenPtyError) unlistenPtyError();
+      cleanupPtyListeners();
       offFontSize();
+      webglCleanupRef.current?.();
+      webglCleanupRef.current = null;
       termRef.current = null;
       fitAddonRef.current = null;
       searchAddonRef.current = null;
       term.dispose();
     };
   }, [sessionId]);
+
+  // Attach the optional WebGL renderer only while the pane is visible so hidden tabs
+  // do not exhaust WebView2's active WebGL context limit or hold idle GPU textures.
+  useEffect(() => {
+    const term = termRef.current;
+    if (!isVisible || !term) {
+      webglCleanupRef.current?.();
+      webglCleanupRef.current = null;
+      return;
+    }
+    let cancelled = false;
+    void import('@xterm/addon-webgl')
+      .then(({ WebglAddon }) => {
+        if (cancelled || termRef.current !== term || webglCleanupRef.current) return;
+        try {
+          const addon = new WebglAddon();
+          let disposed = false;
+          const contextLoss = addon.onContextLoss(() => cleanup()) as { dispose?: () => void } | undefined;
+          function cleanup() {
+            if (disposed) return;
+            disposed = true;
+            if (webglCleanupRef.current === cleanup) webglCleanupRef.current = null;
+            contextLoss?.dispose?.();
+            addon.dispose?.();
+          }
+          term.loadAddon(addon);
+          webglCleanupRef.current = cleanup;
+        } catch (error) {
+          console.warn('Using the standard terminal renderer', error);
+        }
+      })
+      .catch((error) => console.warn('WebGL is unavailable; using the standard terminal renderer', error));
+    return () => {
+      cancelled = true;
+      webglCleanupRef.current?.();
+      webglCleanupRef.current = null;
+    };
+  }, [isVisible, sessionId]);
 
   // Focus terminal when active
   useEffect(() => {

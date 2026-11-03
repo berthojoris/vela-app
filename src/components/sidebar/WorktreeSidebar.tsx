@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   GitBranch,
   Plus,
@@ -43,7 +43,10 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
   const [choosingFolder, setChoosingFolder] = useState(false);
   const [launchingWorktree, setLaunchingWorktree] = useState<string | null>(null);
   const [copiedPath, setCopiedPath] = useState<string | null>(null);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const choosingRef = useRef(false);
+
+  useEffect(() => () => clearTimeout(copyTimerRef.current), []);
 
   const {
     repoPath,
@@ -149,7 +152,8 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
     try {
       await navigator.clipboard.writeText(path);
       setCopiedPath(path);
-      setTimeout(() => setCopiedPath((current) => (current === path ? null : current)), 1500);
+      clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => setCopiedPath((current) => (current === path ? null : current)), 1500);
     } catch (error) {
       useNoticeStore.getState().report('Unable to copy the worktree path', error);
     }

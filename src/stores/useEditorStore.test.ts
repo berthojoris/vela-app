@@ -110,3 +110,23 @@ it('keeps the same relative file in different roots separate', async () => {
   expect(useEditorStore.getState().documents[0].root).toBe('C:/one');
   expect(useEditorStore.getState().documents[1].root).toBe('C:/two');
 });
+
+it('releases duplicate store strings while a live editor is registered and saves its snapshot', async () => {
+  await useEditorStore.getState().openFile('C:/Repo', 'a.ts');
+  const id = useEditorStore.getState().activeDocumentId!;
+  let liveText = 'original\n';
+  const unregister = useEditorStore.getState().registerEditor(id, {
+    readSnapshot: () => {
+      const snap = liveText;
+      return { content: snap, commitSave: () => liveText !== snap };
+    },
+  });
+  expect(useEditorStore.getState().documents[0]).toMatchObject({ content: '', savedContent: '', dirty: false });
+  liveText = 'edited in codemirror\n';
+  useEditorStore.getState().setDirty(id, true);
+  expect(isDirty(useEditorStore.getState().documents[0])).toBe(true);
+  expect(await useEditorStore.getState().saveFile(id)).toBe(true);
+  expect(ipc.saveTextFile).toHaveBeenCalledWith('C:/Repo', 'a.ts', 'edited in codemirror\n', 'v1');
+  expect(isDirty(useEditorStore.getState().documents[0])).toBe(false);
+  unregister();
+});

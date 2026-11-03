@@ -220,3 +220,26 @@ it('sends Escape as a Win32 key record so ConPTY cannot drop a bare ESC', async 
   expect(ipc.writeTerminal).toHaveBeenCalledTimes(1);
   expect(state.keyHandler!(new KeyboardEvent('keydown', { key: 'Escape', isComposing: true }))).toBe(true);
 });
+
+it('unlistens PTY events immediately when the process exits before the tab is closed', async () => {
+  const unlistenOutput = vi.fn();
+  const unlistenExit = vi.fn();
+  const unlistenError = vi.fn();
+  ipc.onPtyOutput.mockImplementationOnce(async (_, callback) => {
+    state.output = callback;
+    return unlistenOutput;
+  });
+  ipc.onPtyExit.mockImplementationOnce(async (_, callback) => {
+    state.exit = callback;
+    return unlistenExit;
+  });
+  ipc.onPtyError.mockResolvedValueOnce(unlistenError);
+  render(<XTermView sessionId="test" isActive />);
+  await waitFor(() => expect(ipc.startTerminalOutput).toHaveBeenCalled());
+  act(() => {
+    state.exit!(0);
+  });
+  expect(unlistenOutput).toHaveBeenCalledTimes(1);
+  expect(unlistenExit).toHaveBeenCalledTimes(1);
+  expect(unlistenError).toHaveBeenCalledTimes(1);
+});

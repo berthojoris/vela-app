@@ -127,7 +127,11 @@ export const TerminalGrid: React.FC<TerminalGridProps> = ({
                   </div>
                 }
               >
-                <XTermView sessionId={session.id} isActive={isWorkspaceActive && isActive} />
+                <XTermView
+                  sessionId={session.id}
+                  isActive={isWorkspaceActive && isActive}
+                  isVisible={isWorkspaceActive && isVisible}
+                />
               </Suspense>
             </ErrorBoundary>
           </div>
