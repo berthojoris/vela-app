@@ -150,17 +150,21 @@ export const TitleBar: React.FC = () => {
       <div data-tauri-drag-region className="flex-1 h-full mx-4 cursor-default" />
 
       {/* Right: Window Controls — flush to top, bottom, and right edge (Fitts's Law) with macOS terminal colors */}
-      <div className="flex items-stretch h-full shrink-0 pointer-events-auto" role="group" aria-label="Window controls">
+      <div
+        className="group/ctl flex items-stretch h-full pr-3 shrink-0 pointer-events-auto"
+        role="group"
+        aria-label="Window controls"
+      >
         {/* Minimize Button (macOS Yellow) */}
         <button
           type="button"
           onClick={handleMinimize}
-          className="group h-full w-11 flex items-center justify-center rounded-none hover:bg-[#FEBC2E]/15 active:bg-[#FEBC2E]/25 transition-colors"
+          className="h-full w-5 flex items-center justify-center rounded-none bg-transparent"
           title="Minimize"
           aria-label="Minimize"
         >
-          <span className="w-4 h-4 rounded-full bg-[#FEBC2E] border border-[#DFA023] flex items-center justify-center text-[#4A3000] transition-transform group-hover:scale-110">
-            <Minus className="w-2.5 h-2.5 stroke-[2.5]" />
+          <span className="w-3 h-3 rounded-full bg-[#FEBC2E] flex items-center justify-center text-[#4A3000]/80">
+            <Minus className="w-2 h-2 stroke-[1.5] opacity-0 group-hover/ctl:opacity-100 transition-opacity" />
           </span>
         </button>
 
@@ -168,29 +172,33 @@ export const TitleBar: React.FC = () => {
         <button
           type="button"
           onClick={handleToggleMaximize}
-          className="group h-full w-11 flex items-center justify-center rounded-none hover:bg-[#28C840]/15 active:bg-[#28C840]/25 transition-colors"
+          className="h-full w-5 flex items-center justify-center rounded-none bg-transparent"
           title={isMaximized ? 'Restore Down' : 'Maximize'}
           aria-label={isMaximized ? 'Restore Down' : 'Maximize'}
         >
-          <span className="w-4 h-4 rounded-full bg-[#28C840] border border-[#1AAB29] flex items-center justify-center text-[#083B0F] transition-transform group-hover:scale-110">
+          <span className="w-3 h-3 rounded-full bg-[#28C840] flex items-center justify-center text-[#083B0F]/80">
             {isMaximized ? (
-              /* Restore Down Icon (Inward arrows) */
+              /* Restore Down Icon (inward arrows) */
               <svg
-                className="w-2.5 h-2.5"
+                className="w-2 h-2 opacity-0 group-hover/ctl:opacity-100 transition-opacity"
                 viewBox="0 0 12 12"
                 fill="none"
                 stroke="currentColor"
-                strokeWidth="1.75"
+                strokeWidth="1.5"
                 strokeLinecap="round"
                 strokeLinejoin="round"
               >
-                <polyline points="4.25 1.5 4.25 4.25 1.5 4.25" />
-                <polyline points="7.75 10.5 7.75 7.75 10.5 7.75" />
+                <polyline points="4.75 2 4.75 4.75 2 4.75" />
+                <polyline points="7.25 10 7.25 7.25 10 7.25" />
               </svg>
             ) : (
-              /* macOS Maximize / Zoom Icon (Opposing diagonal triangles) */
-              <svg className="w-2.5 h-2.5" viewBox="0 0 12 12" fill="currentColor">
-                <path d="M2.5 2h4.2L2 6.7V2.5C2 2.22 2.22 2 2.5 2Zm7 8H5.3L10 5.3v4.2c0 .28-.22.5-.5.5Z" />
+              /* macOS Zoom Icon (two opposing triangles) */
+              <svg
+                className="w-2 h-2 opacity-0 group-hover/ctl:opacity-100 transition-opacity"
+                viewBox="0 0 12 12"
+                fill="currentColor"
+              >
+                <path d="M2.6 2h3.9L2 6.5V2.6c0-.33.27-.6.6-.6Zm6.8 8H5.5L10 5.5v3.9c0 .33-.27.6-.6.6Z" />
               </svg>
             )}
           </span>
@@ -200,12 +208,12 @@ export const TitleBar: React.FC = () => {
         <button
           type="button"
           onClick={handleClose}
-          className="group h-full w-11 flex items-center justify-center rounded-none hover:bg-[#FF5F57]/20 active:bg-[#FF5F57]/30 transition-colors"
+          className="h-full w-5 flex items-center justify-center rounded-none bg-transparent"
           title="Close"
           aria-label="Close"
         >
-          <span className="w-4 h-4 rounded-full bg-[#FF5F57] border border-[#E0443E] flex items-center justify-center text-[#4D0000] transition-transform group-hover:scale-110">
-            <X className="w-2.5 h-2.5 stroke-[2.5]" />
+          <span className="w-3 h-3 rounded-full bg-[#FF5F57] flex items-center justify-center text-[#4D0000]/80">
+            <X className="w-2 h-2 stroke-[1.5] opacity-0 group-hover/ctl:opacity-100 transition-opacity" />
           </span>
         </button>
       </div>
