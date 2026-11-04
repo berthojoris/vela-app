@@ -9,7 +9,11 @@ const ipc = vi.hoisted(() => ({
   toggleMaximize: vi.fn(async () => true),
 }));
 vi.mock('../../lib/tauriIpc', () => ({ tauriIpc: ipc }));
-beforeEach(() => ipc.toggleMaximize.mockClear());
+beforeEach(() => {
+  ipc.toggleMaximize.mockClear();
+  ipc.isWindowMaximized.mockReset();
+  ipc.isWindowMaximized.mockResolvedValue(false);
+});
 
 it('ignores double-clicks on window controls, including SVG children', async () => {
   render(<TitleBar />);
@@ -42,4 +46,32 @@ it('keeps window control buttons flush with the top-right edge and uses macOS te
   expect(minimizeBtn.querySelector('span')?.className).toContain('bg-[#FEBC2E]');
   expect(maximizeBtn.querySelector('span')?.className).toContain('bg-[#28C840]');
   expect(closeBtn.querySelector('span')?.className).toContain('bg-[#FF5F57]');
+});
+
+it('keeps every drag region disabled while the window is maximized', async () => {
+  ipc.isWindowMaximized.mockResolvedValue(true);
+  const { container } = render(<TitleBar />);
+  const header = container.querySelector('header')!;
+
+  // Unknown native state is treated as "do not drag" so a maximized startup window
+  // can never be pulled out of maximize mode before the first state read resolves.
+  expect(header.getAttribute('data-tauri-drag-region')).toBe('false');
+
+  await waitFor(() => expect(screen.getByTitle('Restore Down')).toBeTruthy());
+  const dragRegions = [header, ...Array.from(header.querySelectorAll('[data-tauri-drag-region]'))];
+  expect(dragRegions.length).toBeGreaterThan(1);
+  for (const region of dragRegions) {
+    expect(region.getAttribute('data-tauri-drag-region')).toBe('false');
+  }
+});
+
+it('enables dragging only when the window is restored', async () => {
+  const { container } = render(<TitleBar />);
+  const header = container.querySelector('header')!;
+
+  await waitFor(() => expect(header.getAttribute('data-tauri-drag-region')).toBe('true'));
+
+  fireEvent.click(screen.getByTitle('Maximize'));
+  await waitFor(() => expect(header.getAttribute('data-tauri-drag-region')).toBe('false'));
+  expect(screen.getByTitle('Restore Down')).toBeTruthy();
 });

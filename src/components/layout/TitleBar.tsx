@@ -46,7 +46,12 @@ const PathLabel: React.FC<{ path: string; muted?: boolean }> = ({ path, muted })
 };
 
 export const TitleBar: React.FC = () => {
-  const [isMaximized, setIsMaximized] = useState(false);
+  // `null` until the native window reports its state. The drag regions stay
+  // disabled while the state is unknown, because the window starts maximized
+  // (tauri.conf.json) and dragging a maximized window restores it: Tauri's
+  // start_dragging sends WM_NCLBUTTONDOWN/HTCAPTION, which Windows answers by
+  // unmaximizing and moving the window.
+  const [isMaximized, setIsMaximized] = useState<boolean | null>(null);
 
   useEffect(() => {
     let disposed = false;
@@ -108,9 +113,14 @@ export const TitleBar: React.FC = () => {
 
   const activeWorktree = worktrees.find((w) => w.id === activeWorktreeId);
 
+  // Only enable the native drag regions once the window is known to be in the
+  // restored state. Tauri's "false" value disables dragging for the element and
+  // any descendant, so a maximized window can never be dragged loose.
+  const dragRegion = isMaximized === false ? 'true' : 'false';
+
   return (
     <header
-      data-tauri-drag-region
+      data-tauri-drag-region={dragRegion}
       onDoubleClick={(event) => {
         if (event.target instanceof Element && event.target.closest('button')) return;
         void handleToggleMaximize();
@@ -147,7 +157,7 @@ export const TitleBar: React.FC = () => {
       </div>
 
       {/* Middle: Drag Region Filler */}
-      <div data-tauri-drag-region className="flex-1 h-full mx-4 cursor-default" />
+      <div data-tauri-drag-region={dragRegion} className="flex-1 h-full mx-4 cursor-default" />
 
       {/* Right: Window Controls — flush to top, bottom, and right edge (Fitts's Law) with macOS terminal colors */}
       <div
