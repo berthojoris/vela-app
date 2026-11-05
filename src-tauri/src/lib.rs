@@ -10,6 +10,8 @@ mod files;
 pub mod git;
 pub mod models;
 pub mod process;
+#[cfg(windows)]
+mod process_job;
 pub mod pty;
 
 use agent::supervisor::AgentSupervisor;
@@ -303,8 +305,10 @@ async fn reset_worktree(worktree_path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn get_shell_profiles() -> Result<Vec<ShellProfile>, String> {
-    Ok(AgentSupervisor::get_shell_profiles())
+async fn get_shell_profiles() -> Result<Vec<ShellProfile>, String> {
+    tokio::task::spawn_blocking(AgentSupervisor::cached_shell_profiles)
+        .await
+        .map_err(|error| format!("Shell discovery worker failed: {error}"))
 }
 
 #[tauri::command]

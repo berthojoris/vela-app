@@ -1,5 +1,9 @@
 use crate::models::{AgentType, ShellProfile};
 use std::path::Path;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
+static PROFILE_CACHE: Mutex<Option<(Instant, Vec<ShellProfile>)>> = Mutex::new(None);
 
 pub struct AgentSupervisor;
 
@@ -29,6 +33,22 @@ fn git_bash_executable() -> Option<&'static str> {
 }
 
 impl AgentSupervisor {
+    /// Called on a blocking worker. Serialize discovery so concurrent dialogs share
+    /// one PATH scan, and periodically rediscover newly installed agents.
+    pub fn cached_shell_profiles() -> Vec<ShellProfile> {
+        let mut cache = PROFILE_CACHE
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some((created, profiles)) = cache.as_ref() {
+            if created.elapsed() < Duration::from_secs(30) {
+                return profiles.clone();
+            }
+        }
+        let profiles = Self::get_shell_profiles();
+        *cache = Some((Instant::now(), profiles.clone()));
+        profiles
+    }
+
     /// Provides preset shell and agent profiles.
     ///
     /// Plain shells come first so the default profile always launches a usable
@@ -79,7 +99,10 @@ impl AgentSupervisor {
                 id: "wsl".to_string(),
                 name: "WSL (Default Linux)".to_string(),
                 executable: "wsl.exe".to_string(),
-                args: vec![],
+                // Start in the Linux home directory. Inheriting a Windows
+                // worktree path would place the shell under /mnt/c, a slow
+                // 9p mount, which makes git/npm work inside WSL sluggish.
+                args: vec!["--cd".to_string(), "~".to_string()],
                 is_agent: false,
                 agent_type: None,
             });
@@ -258,6 +281,24 @@ mod tests {
             .iter()
             .any(|profile| profile.id == "pwsh" || profile.id == "powershell"));
         assert!(profiles.iter().any(|profile| profile.id == "cmd"));
+    }
+
+    #[test]
+    fn wsl_profile_starts_in_linux_home() {
+        let profiles = AgentSupervisor::get_shell_profiles();
+        let Some(wsl) = profiles.iter().find(|profile| profile.id == "wsl") else {
+            assert!(
+                !AgentSupervisor::check_binary_exists("wsl.exe"),
+                "wsl.exe is on PATH but no profile was produced"
+            );
+            return;
+        };
+        assert_eq!(wsl.executable, "wsl.exe");
+        assert_eq!(
+            wsl.args,
+            vec!["--cd".to_string(), "~".to_string()],
+            "WSL must open in the Linux home, not the inherited Windows worktree path"
+        );
     }
 
     #[test]

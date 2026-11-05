@@ -42,6 +42,9 @@ interface WorktreeState {
 let syncSequence = 0;
 let refreshSequence = 0;
 let branchSequence = 0;
+// Keep this across repository changes: stale responses can be ignored, but their
+// filesystem workers still exist until IPC finishes.
+let branchReadPending = false;
 let pendingRefresh: { repo: string; checkStatus: boolean; promise: Promise<void> } | null = null;
 
 // Remembers repository detection and worktree listings per directory so switching tabs
@@ -305,7 +308,8 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
    */
   refreshWorktreeBranches: async () => {
     const { repoPath, worktrees } = get();
-    if (!repoPath || worktrees.length === 0) return;
+    if (!repoPath || worktrees.length === 0 || branchReadPending) return;
+    branchReadPending = true;
     const paths = worktrees.map((worktree) => worktree.path);
     const context = syncSequence;
     const request = ++branchSequence;
@@ -316,6 +320,8 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
       // A transient read (locked HEAD during checkout, worktree removed mid-flight) is retried
       // by the next poll; it must not surface as an application error.
       return;
+    } finally {
+      branchReadPending = false;
     }
     // Drop out-of-order responses and any tab switch that replaced the repository mid-read.
     if (request !== branchSequence || context !== syncSequence || get().repoPath !== repoPath) return;

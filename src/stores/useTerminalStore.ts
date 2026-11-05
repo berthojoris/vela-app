@@ -37,6 +37,7 @@ interface TerminalState {
 
 // Drop the retired recent-directory history from older builds
 let pendingLaunches = 0;
+let profileFetchPending = false;
 try {
   localStorage.removeItem('vela_recent_dirs');
   localStorage.removeItem('orca_recent_dirs');
@@ -183,6 +184,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   },
 
   fetchProfiles: async () => {
+    if (profileFetchPending) return;
+    profileFetchPending = true;
     try {
       const profiles = await tauriIpc.getShellProfiles();
       // Prefer a plain shell: agent profiles are only offered when installed.
@@ -193,6 +196,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       });
     } catch (e) {
       useNoticeStore.getState().report('Unable to load shell profiles. You can retry from the terminal dialog', e);
+    } finally {
+      profileFetchPending = false;
     }
   },
 

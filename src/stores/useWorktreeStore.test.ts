@@ -316,6 +316,30 @@ it('forces a new post-mutation read instead of reusing an earlier status check',
 });
 
 describe('branch labels follow git switch/checkout', () => {
+  it('keeps only one slow HEAD read active across polls and repository changes', async () => {
+    const pending = deferred<(string | null)[]>();
+    ipc.readWorktreeBranches.mockReturnValueOnce(pending.promise).mockResolvedValue(['next']);
+    store.setState({ repoPath: 'C:/A', worktrees: [worktree('main', 'C:/A')] });
+    const read = store.getState().refreshWorktreeBranches();
+    await Promise.all(Array.from({ length: 20 }, () => store.getState().refreshWorktreeBranches()));
+    store.setState({ repoPath: 'C:/B', worktrees: [worktree('B', 'C:/B')] });
+    await store.getState().refreshWorktreeBranches();
+    expect(ipc.readWorktreeBranches).toHaveBeenCalledTimes(1);
+    pending.resolve(['stale']);
+    await read;
+    expect(store.getState().worktrees[0].branch).toBe('B');
+    await store.getState().refreshWorktreeBranches();
+    expect(ipc.readWorktreeBranches).toHaveBeenCalledTimes(2);
+    expect(store.getState().worktrees[0].branch).toBe('next');
+  });
+
+  it('allows the next poll after a failed HEAD read', async () => {
+    store.setState({ repoPath: 'C:/A', worktrees: [worktree('main', 'C:/A')] });
+    ipc.readWorktreeBranches.mockRejectedValueOnce(new Error('Unavailable')).mockResolvedValue(['recovered']);
+    await store.getState().refreshWorktreeBranches();
+    await store.getState().refreshWorktreeBranches();
+    expect(store.getState().worktrees[0].branch).toBe('recovered');
+  });
   it('updates a worktree branch from HEAD without running git status', async () => {
     store.setState({ repoPath: 'C:/A', worktrees: [worktree('main', 'C:/A')], autoGitStatus: false });
     const before = store.getState().statusRevision;

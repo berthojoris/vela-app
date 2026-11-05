@@ -16,6 +16,18 @@ beforeEach(() => {
   });
 });
 
+it('coalesces slow shell discovery requests and permits a later refresh', async () => {
+  const pending = deferred<[]>();
+  ipc.getShellProfiles.mockReset().mockReturnValueOnce(pending.promise).mockResolvedValue([]);
+  const first = store.getState().fetchProfiles();
+  await Promise.all(Array.from({ length: 20 }, () => store.getState().fetchProfiles()));
+  expect(ipc.getShellProfiles).toHaveBeenCalledTimes(1);
+  pending.resolve([]);
+  await first;
+  await store.getState().fetchProfiles();
+  expect(ipc.getShellProfiles).toHaveBeenCalledTimes(2);
+});
+
 describe('stable terminal panes', () => {
   it('does not reorder panes when selecting the current split mode again', () => {
     store.getState().setSplitMode('vertical');

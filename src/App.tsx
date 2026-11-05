@@ -102,14 +102,21 @@ export const App: React.FC = () => {
   // not compete with Vela's own Git writes. It also keeps header/footer labels current while a
   // modal is open, and runs on focus for the case where the window was in the background.
   useEffect(() => {
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      if (!document.hidden) await refreshWorktreeBranches();
+      if (!disposed) timer = setTimeout(() => void poll(), 2000);
+    };
     const check = () => {
       if (!document.hidden) void refreshWorktreeBranches();
     };
-    const interval = setInterval(check, 2000);
+    timer = setTimeout(() => void poll(), 2000);
     window.addEventListener('focus', check);
     return () => {
       window.removeEventListener('focus', check);
-      clearInterval(interval);
+      disposed = true;
+      clearTimeout(timer);
     };
   }, [refreshWorktreeBranches]);
 

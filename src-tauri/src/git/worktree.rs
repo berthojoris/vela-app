@@ -235,13 +235,25 @@ impl GitManager {
     /// keep the previous label rather than guessing. A raw commit ID means detached HEAD, which
     /// is also the wording `git worktree list` uses.
     pub fn read_head_branch(worktree_path: &str) -> Option<String> {
+        // Metadata should be tiny. Do not allocate arbitrary file contents if
+        // HEAD or a worktree pointer has been replaced by a large file.
+        fn metadata_text(path: &Path) -> Option<String> {
+            use std::io::Read;
+            let mut text = String::new();
+            std::fs::File::open(path)
+                .ok()?
+                .take(4097)
+                .read_to_string(&mut text)
+                .ok()?;
+            (text.len() <= 4096).then_some(text)
+        }
         let path = Self::normalize_path(worktree_path);
         let dot_git = Path::new(&path).join(".git");
         let git_dir = if dot_git.is_dir() {
             dot_git
         } else {
             // Linked worktrees use a `.git` file: "gitdir: <absolute or relative path>".
-            let pointer = std::fs::read_to_string(&dot_git).ok()?;
+            let pointer = metadata_text(&dot_git)?;
             let target = pointer.trim().strip_prefix("gitdir:")?.trim().to_string();
             let target = Path::new(&target);
             if target.is_absolute() {
@@ -250,7 +262,7 @@ impl GitManager {
                 Path::new(&path).join(target)
             }
         };
-        let head = std::fs::read_to_string(git_dir.join("HEAD")).ok()?;
+        let head = metadata_text(&git_dir.join("HEAD"))?;
         let head = head.trim();
         match head.strip_prefix("ref:") {
             Some(reference) => {
