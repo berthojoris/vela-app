@@ -99,10 +99,9 @@ impl AgentSupervisor {
                 id: "wsl".to_string(),
                 name: "WSL (Default Linux)".to_string(),
                 executable: "wsl.exe".to_string(),
-                // Start in the Linux home directory. Inheriting a Windows
-                // worktree path would place the shell under /mnt/c, a slow
-                // 9p mount, which makes git/npm work inside WSL sluggish.
-                args: vec!["--cd".to_string(), "~".to_string()],
+                // Inherit the selected directory from the PTY process. WSL
+                // translates Windows paths to the distribution's mount path.
+                args: vec![],
                 is_agent: false,
                 agent_type: None,
             });
@@ -284,7 +283,7 @@ mod tests {
     }
 
     #[test]
-    fn wsl_profile_starts_in_linux_home() {
+    fn wsl_profile_inherits_selected_directory() {
         let profiles = AgentSupervisor::get_shell_profiles();
         let Some(wsl) = profiles.iter().find(|profile| profile.id == "wsl") else {
             assert!(
@@ -294,10 +293,9 @@ mod tests {
             return;
         };
         assert_eq!(wsl.executable, "wsl.exe");
-        assert_eq!(
-            wsl.args,
-            vec!["--cd".to_string(), "~".to_string()],
-            "WSL must open in the Linux home, not the inherited Windows worktree path"
+        assert!(
+            wsl.args.is_empty(),
+            "WSL must inherit the selected directory without a --cd override"
         );
     }
 
