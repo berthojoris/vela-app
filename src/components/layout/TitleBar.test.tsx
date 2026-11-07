@@ -6,13 +6,42 @@ import { TitleBar } from './TitleBar';
 const ipc = vi.hoisted(() => ({
   isWindowMaximized: vi.fn(async () => false),
   onWindowResized: vi.fn(async () => () => {}),
+  onAppCloseRequested: vi.fn(async (_cb: () => void) => () => {}),
   toggleMaximize: vi.fn(async () => true),
+  closeWindow: vi.fn(async () => {}),
 }));
 vi.mock('../../lib/tauriIpc', () => ({ tauriIpc: ipc }));
 beforeEach(() => {
   ipc.toggleMaximize.mockClear();
   ipc.isWindowMaximized.mockReset();
   ipc.isWindowMaximized.mockResolvedValue(false);
+  ipc.closeWindow.mockClear();
+  ipc.onAppCloseRequested.mockClear();
+});
+
+it('asks for confirmation before closing the app', async () => {
+  render(<TitleBar />);
+
+  fireEvent.click(screen.getByTitle('Close'));
+  const dialog = await screen.findByRole('dialog', { name: /Quit Vela\?/ });
+  expect(ipc.closeWindow).not.toHaveBeenCalled();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Keep open' }));
+  expect(ipc.closeWindow).not.toHaveBeenCalled();
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(dialog).toBeTruthy();
+
+  fireEvent.click(screen.getByTitle('Close'));
+  fireEvent.click(await screen.findByRole('button', { name: 'Quit Vela' }));
+  await waitFor(() => expect(ipc.closeWindow).toHaveBeenCalledWith(false, true));
+});
+
+it('opens the quit dialog when the backend reports a blocked close', async () => {
+  render(<TitleBar />);
+  expect(screen.queryByRole('dialog')).toBeNull();
+
+  await ipc.onAppCloseRequested.mock.calls[0][0]();
+  expect(await screen.findByRole('dialog', { name: /Quit Vela\?/ })).toBeTruthy();
 });
 
 it('ignores double-clicks on window controls, including SVG children', async () => {

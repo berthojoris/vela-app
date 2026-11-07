@@ -43,6 +43,10 @@ export const tauriIpc = {
     if (!isTauri()) return Promise.resolve(() => {});
     return listen('close-blocked-unsaved-files', () => callback());
   },
+  onAppCloseRequested(callback: () => void): Promise<UnlistenFn> {
+    if (!isTauri()) return Promise.resolve(() => {});
+    return listen('app-close-requested', () => callback());
+  },
   async reportError(message: string): Promise<void> {
     if (!isTauri()) return;
     await invoke('report_frontend_error', { message: message.slice(0, 8000) });
@@ -251,10 +255,10 @@ export const tauriIpc = {
     await invoke('minimize_window');
   },
 
-  async closeWindow(unsavedChangesConfirmed = false): Promise<void> {
+  async closeWindow(unsavedChangesConfirmed = false, closeConfirmed = false): Promise<void> {
     if (!isTauri()) return;
     await prepareWindowClose();
-    await invoke('close_window', { unsavedChangesConfirmed });
+    await invoke('close_window', { unsavedChangesConfirmed, closeConfirmed });
   },
 
   async isWindowMaximized(): Promise<boolean> {

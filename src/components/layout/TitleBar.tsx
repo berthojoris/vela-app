@@ -6,6 +6,7 @@ import { useWorktreeStore } from '../../stores/useWorktreeStore';
 import { useTerminalStore } from '../../stores/useTerminalStore';
 import velaLogo from '../../assets/vela_logo.webp';
 import { useNoticeStore } from '../../stores/useNoticeStore';
+import { CloseAppModal } from '../modals/CloseAppModal';
 import { describeDisplayPath, pathCharBudget } from '../../lib/formatPath';
 
 /** Character budget that follows the window width so paths compact before clipping. */
@@ -53,6 +54,23 @@ export const TitleBar: React.FC = () => {
   // start_dragging sends WM_NCLBUTTONDOWN/HTCAPTION, which Windows answers by
   // unmaximizing and moving the window.
   const [isMaximized, setIsMaximized] = useState<boolean | null>(null);
+  const [closeAppOpen, setCloseAppOpen] = useState(false);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void tauriIpc
+      .onAppCloseRequested(() => setCloseAppOpen(true))
+      .then((cleanup) => {
+        if (disposed) cleanup();
+        else unlisten = cleanup;
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 
   useEffect(() => {
     let disposed = false;
@@ -99,10 +117,16 @@ export const TitleBar: React.FC = () => {
     }
   };
 
-  const handleClose = async () => {
+  const handleClose = () => {
+    setCloseAppOpen(true);
+  };
+
+  const handleConfirmQuit = async () => {
     try {
-      await tauriIpc.closeWindow();
+      await tauriIpc.closeWindow(false, true);
+      setCloseAppOpen(false);
     } catch (error) {
+      setCloseAppOpen(false);
       useNoticeStore.getState().report('Unable to close window', error);
     }
   };
@@ -120,6 +144,7 @@ export const TitleBar: React.FC = () => {
   );
   const activeSession = sessions.find((s) => s.id === activeSessionId);
   const currentCwd = activeSession?.cwd || activeSessionCwd;
+  const runningCount = sessions.filter((s) => !s.exited).length;
 
   const activeWorktree = worktrees.find((w) => w.id === activeWorktreeId);
 
@@ -183,7 +208,7 @@ export const TitleBar: React.FC = () => {
           title="Minimize"
           aria-label="Minimize"
         >
-          <span className="w-3 h-3 rounded-full bg-[#FEBC2E] flex items-center justify-center text-[#4A3000]/80">
+          <span className="w-3.5 h-3.5 rounded-full bg-[#FEBC2E] flex items-center justify-center text-[#4A3000]/80">
             <Minus className="w-2 h-2 stroke-[1.5] opacity-0 group-hover/ctl:opacity-100 transition-opacity" />
           </span>
         </button>
@@ -196,7 +221,7 @@ export const TitleBar: React.FC = () => {
           title={isMaximized ? 'Restore Down' : 'Maximize'}
           aria-label={isMaximized ? 'Restore Down' : 'Maximize'}
         >
-          <span className="w-3 h-3 rounded-full bg-[#28C840] flex items-center justify-center text-[#083B0F]/80">
+          <span className="w-3.5 h-3.5 rounded-full bg-[#28C840] flex items-center justify-center text-[#083B0F]/80">
             {isMaximized ? (
               /* Restore Down Icon (inward arrows) */
               <svg
@@ -232,11 +257,17 @@ export const TitleBar: React.FC = () => {
           title="Close"
           aria-label="Close"
         >
-          <span className="w-3 h-3 rounded-full bg-[#FF5F57] flex items-center justify-center text-[#4D0000]/80">
+          <span className="w-3.5 h-3.5 rounded-full bg-[#FF5F57] flex items-center justify-center text-[#4D0000]/80">
             <X className="w-2 h-2 stroke-[1.5] opacity-0 group-hover/ctl:opacity-100 transition-opacity" />
           </span>
         </button>
       </div>
+      <CloseAppModal
+        isOpen={closeAppOpen}
+        runningCount={runningCount}
+        onCancel={() => setCloseAppOpen(false)}
+        onConfirm={() => void handleConfirmQuit()}
+      />
     </header>
   );
 };

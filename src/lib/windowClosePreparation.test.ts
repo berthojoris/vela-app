@@ -21,7 +21,7 @@ it('waits for recovery data before requesting native close with its existing con
   expect(native.invoke).not.toHaveBeenCalled();
   pending.resolve();
   await closing;
-  expect(native.invoke).toHaveBeenCalledWith('close_window', { unsavedChangesConfirmed: true });
+  expect(native.invoke).toHaveBeenCalledWith('close_window', { unsavedChangesConfirmed: true, closeConfirmed: false });
 });
 
 it('does not bypass close preparation failures', async () => {

@@ -31,25 +31,40 @@ const GIT_WRITE_CLOSE_MESSAGE: &str =
 /// files here instead of registering a JS `onCloseRequested` listener: that
 /// listener makes Tauri defer every close to `window.destroy()` from JS, which
 /// needs an extra ACL permission and would bypass the Git-write guard below.
+/// Closes without a confirmed quit (see `CloseBlock::NeedsConfirmation`) emit
+/// `app-close-requested` so the UI can show the quit-confirmation modal.
 #[derive(Default)]
 struct CloseGuard {
     unsaved_editor_changes: AtomicBool,
     /// One-shot pass for the next close request after the user saved or
     /// discarded their files in the unsaved-changes dialog.
     unsaved_changes_confirmed: AtomicBool,
+    /// One-shot pass for the next close request after the user confirmed the
+    /// quit-confirmation modal.
+    close_confirmed: AtomicBool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 enum CloseBlock {
     GitWrite,
     UnsavedFiles,
+    /// No user confirmation for quitting the app yet; the frontend shows the
+    /// quit-confirmation modal and retries with `close_window(closeConfirmed: true)`.
+    NeedsConfirmation,
 }
 
-fn close_block(git_writing: bool, unsaved: bool, confirmed: bool) -> Option<CloseBlock> {
+fn close_block(
+    git_writing: bool,
+    unsaved: bool,
+    confirmed: bool,
+    close_confirmed: bool,
+) -> Option<CloseBlock> {
     if git_writing {
         Some(CloseBlock::GitWrite)
     } else if unsaved && !confirmed {
         Some(CloseBlock::UnsavedFiles)
+    } else if !close_confirmed {
+        Some(CloseBlock::NeedsConfirmation)
     } else {
         None
     }
@@ -340,6 +355,7 @@ fn close_window(
     window: Window,
     guard: State<'_, CloseGuard>,
     unsaved_changes_confirmed: Option<bool>,
+    close_confirmed: Option<bool>,
 ) -> Result<(), String> {
     if GitManager::has_active_writes() {
         return Err(GIT_WRITE_CLOSE_MESSAGE.into());
@@ -348,10 +364,14 @@ fn close_window(
     guard
         .unsaved_changes_confirmed
         .store(confirmed, Ordering::Release);
+    guard
+        .close_confirmed
+        .store(close_confirmed.unwrap_or(false), Ordering::Release);
     window.close().map_err(|e| {
         guard
             .unsaved_changes_confirmed
             .store(false, Ordering::Release);
+        guard.close_confirmed.store(false, Ordering::Release);
         e.to_string()
     })
 }
@@ -456,6 +476,7 @@ pub fn run() {
                     GitManager::has_active_writes(),
                     guard.unsaved_editor_changes.load(Ordering::Acquire),
                     guard.unsaved_changes_confirmed.swap(false, Ordering::AcqRel),
+                    guard.close_confirmed.swap(false, Ordering::AcqRel),
                 );
                 match block {
                     Some(CloseBlock::GitWrite) => {
@@ -465,6 +486,10 @@ pub fn run() {
                     Some(CloseBlock::UnsavedFiles) => {
                         api.prevent_close();
                         let _ = window.emit("close-blocked-unsaved-files", ());
+                    }
+                    Some(CloseBlock::NeedsConfirmation) => {
+                        api.prevent_close();
+                        let _ = window.emit("app-close-requested", ());
                     }
                     None => {}
                 }
@@ -583,14 +608,24 @@ mod tests {
 
     #[test]
     fn close_block_prefers_git_writes_and_honors_confirmed_unsaved_files() {
-        assert_eq!(close_block(false, false, false), None);
         assert_eq!(
-            close_block(false, true, false),
+            close_block(false, false, false, false),
+            Some(CloseBlock::NeedsConfirmation)
+        );
+        assert_eq!(close_block(false, false, false, true), None);
+        assert_eq!(
+            close_block(false, true, false, true),
             Some(CloseBlock::UnsavedFiles)
         );
-        assert_eq!(close_block(false, true, true), None);
-        assert_eq!(close_block(true, false, false), Some(CloseBlock::GitWrite));
-        assert_eq!(close_block(true, true, true), Some(CloseBlock::GitWrite));
+        assert_eq!(close_block(false, true, true, true), None);
+        assert_eq!(
+            close_block(true, false, false, true),
+            Some(CloseBlock::GitWrite)
+        );
+        assert_eq!(
+            close_block(true, true, true, true),
+            Some(CloseBlock::GitWrite)
+        );
     }
 
     #[test]
