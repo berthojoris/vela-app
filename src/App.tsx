@@ -4,6 +4,7 @@ import { TitleBar } from './components/layout/TitleBar';
 import { TabBar } from './components/tabs/TabBar';
 import { TerminalGrid } from './components/terminal/TerminalGrid';
 import { StatusBar } from './components/layout/StatusBar';
+import { IdeLauncherButtons } from './components/layout/IdeLauncherButtons';
 import { WorktreeSidebar } from './components/sidebar/WorktreeSidebar';
 import { DiffViewerModal } from './components/diff/DiffViewerModal';
 import { CreateWorktreeModal } from './components/modals/CreateWorktreeModal';
@@ -169,6 +170,7 @@ export const App: React.FC = () => {
                 Editor<span className="text-orca-muted">{editorDocumentCount}</span>
               </button>
             )}
+            <IdeLauncherButtons className="ml-auto mr-1" />
           </div>
           <EditorWorkspace />
           <div className={workspaceView === 'terminal' ? 'flex flex-col flex-1 min-h-0' : 'hidden'}>

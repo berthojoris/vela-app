@@ -130,6 +130,11 @@ export const tauriIpc = {
     await invoke('open_directory_in_explorer', { path });
   },
 
+  async openInIde(path: string, ide: 'antigravity' | 'cursor'): Promise<void> {
+    if (!isTauri()) return;
+    await invoke('open_in_ide', { path, ide });
+  },
+
   async listWorktrees(repoPath: string, checkStatus?: boolean): Promise<GitWorktree[]> {
     if (!isTauri()) return [];
     return await invoke<GitWorktree[]>('list_worktrees', { repoPath, checkStatus });

@@ -459,6 +459,49 @@ async fn open_directory_in_explorer(path: String) -> Result<(), String> {
     .map_err(|error| format!("File Explorer worker failed: {error}"))?
 }
 
+#[tauri::command]
+async fn open_in_ide(path: String, ide: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        let win_path = format_explorer_path(&path)?;
+
+        #[cfg(windows)]
+        {
+            let local = std::env::var("LOCALAPPDATA").unwrap_or_default();
+            let program_files =
+                std::env::var("ProgramFiles").unwrap_or_else(|_| "C:\\Program Files".into());
+            let candidates: Vec<String> = match ide.as_str() {
+                "antigravity" => vec![
+                    format!(r"{local}\Programs\Antigravity IDE\Antigravity IDE.exe"),
+                    format!(r"{local}\Programs\antigravity\Antigravity.exe"),
+                ],
+                "cursor" => vec![
+                    format!(r"{program_files}\cursor\Cursor.exe"),
+                    format!(r"{local}\Programs\cursor\Cursor.exe"),
+                ],
+                other => return Err(format!("Unknown IDE: {other}")),
+            };
+            // ponytail: known install locations only; add PATH/PATHEXT scan
+            // (AgentSupervisor::check_binary_exists) if a custom install shows up.
+            let exe = candidates
+                .into_iter()
+                .find(|candidate| std::path::Path::new(candidate).is_file())
+                .ok_or_else(|| format!("{} is not installed at a known location.", ide))?;
+            crate::process::hidden_command(&exe)
+                .arg(&win_path)
+                .spawn()
+                .map(|_| ())
+                .map_err(|error| format!("Cannot open {ide}: {error}"))
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = win_path;
+            Err("Opening an IDE is only supported on Windows.".into())
+        }
+    })
+    .await
+    .map_err(|error| format!("IDE launcher worker failed: {error}"))?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     diagnostics::install_panic_hook();
@@ -541,6 +584,7 @@ pub fn run() {
             show_window,
             select_directory,
             open_directory_in_explorer,
+            open_in_ide,
         ])
         .build(tauri::generate_context!())
         .map(|app| {
