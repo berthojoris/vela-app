@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import React, { useEffect, useState } from 'react';
 import { useTerminalStore } from '../../stores/useTerminalStore';
 import { useWorktreeStore } from '../../stores/useWorktreeStore';
@@ -6,8 +7,12 @@ import { version as bundleVersion } from '../../../package.json';
 import { isTauri } from '../../lib/tauriIpc';
 
 export const StatusBar: React.FC = () => {
-  const { sessions, splitMode } = useTerminalStore();
-  const { activeWorktreeId, worktrees } = useWorktreeStore();
+  const { sessions, splitMode } = useTerminalStore(
+    useShallow((state) => ({ sessions: state.sessions, splitMode: state.splitMode }))
+  );
+  const { activeWorktreeId, worktrees } = useWorktreeStore(
+    useShallow((state) => ({ activeWorktreeId: state.activeWorktreeId, worktrees: state.worktrees }))
+  );
   // Never hardcode this string: the bundled package.json version is the initial/fallback
   // value, and the running binary's real version (tauri.conf.json -> ProductVersion)
   // replaces it when the Tauri IPC is available.

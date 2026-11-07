@@ -26,6 +26,45 @@ vi.mock('./components/modals/OpenTerminalModal', () => ({ OpenTerminalModal: () 
 vi.mock('./components/editor/EditorWorkspace', () => ({ EditorWorkspace: () => null }));
 afterEach(() => vi.useRealTimers());
 
+it('does not rerender the app shell for profile discovery, tab renames or unrelated Git state', async () => {
+  useWorktreeStore.setState(useWorktreeStore.getInitialState());
+  useTerminalStore.setState({
+    ...useTerminalStore.getInitialState(),
+    sessions: [
+      {
+        id: 'one',
+        title: 'One',
+        shell: 'cmd.exe',
+        cwd: 'C:/repo',
+        worktree_id: null,
+        cols: 80,
+        rows: 24,
+        pid: null,
+        is_agent: false,
+        agent_type: null,
+      },
+    ],
+    activeSessionId: 'one',
+  });
+  useEditorStore.setState(useEditorStore.getInitialState());
+  useDiffStore.setState(useDiffStore.getInitialState());
+  const onRender = vi.fn();
+  await act(async () => {
+    render(
+      <React.Profiler id="workspace" onRender={onRender}>
+        <App />
+      </React.Profiler>
+    );
+  });
+  onRender.mockClear();
+  act(() => {
+    useTerminalStore.setState({ profiles: [], defaultProfileId: 'changed' });
+    useTerminalStore.getState().renameSession('one', 'Renamed');
+    useWorktreeStore.setState({ statusRevision: 42, error: 'unrelated' });
+  });
+  expect(onRender).not.toHaveBeenCalled();
+});
+
 it('shows the Editor tab only while files are open and returns to Terminal after the last close', async () => {
   useWorktreeStore.setState(useWorktreeStore.getInitialState());
   useTerminalStore.setState(useTerminalStore.getInitialState());

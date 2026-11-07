@@ -16,6 +16,7 @@ export interface EditorDocument extends TextFile {
 }
 
 export interface EditorSnapshotHandle {
+  readRecoverySnapshot?: () => { content: string; savedContent: string };
   readSnapshot: () => {
     content: string;
     /** Marks the snapshot as saved in the live editor and returns whether newer edits exist. */
@@ -28,6 +29,10 @@ interface EditorState {
   activeDocumentId: string | null;
   workspaceView: 'terminal' | 'editor';
   opening: string[];
+  explorerRoot: string | null;
+  sidebarMode: 'git' | 'files';
+  setExplorerRoot: (root: string | null) => void;
+  setSidebarMode: (mode: 'git' | 'files') => void;
   setWorkspaceView: (view: 'terminal' | 'editor') => void;
   activate: (id: string) => void;
   openFile: (root: string, path: string) => Promise<void>;
@@ -43,6 +48,26 @@ export const fileKey = (root: string, path: string) =>
 export const isDirty = (doc: EditorDocument) => doc.dirty ?? doc.content !== doc.savedContent;
 const saves = new Map<string, Promise<boolean>>();
 const editors = new Map<string, EditorSnapshotHandle>();
+const contentListeners = new Set<() => void>();
+export const notifyEditorContentChanged = () => contentListeners.forEach((listener) => listener());
+export function subscribeEditorContent(listener: () => void): () => void {
+  contentListeners.add(listener);
+  return () => contentListeners.delete(listener);
+}
+
+export function captureEditorDocuments(): EditorDocument[] {
+  return useEditorStore.getState().documents.map((doc) => {
+    // Clean files are reopened from disk; only drafts need a text backup.
+    const snapshot = isDirty(doc) ? (editors.get(doc.id)?.readRecoverySnapshot?.() ?? doc) : null;
+    return {
+      ...doc,
+      content: snapshot?.content ?? '',
+      savedContent: snapshot?.savedContent ?? '',
+      saving: false,
+      error: null,
+    };
+  });
+}
 let openSequence = 0;
 
 export const useEditorStore = create<EditorState>((set, get) => ({
@@ -50,6 +75,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   activeDocumentId: null,
   workspaceView: 'terminal',
   opening: [],
+  explorerRoot: null,
+  sidebarMode: 'git',
+  setExplorerRoot: (explorerRoot) => set({ explorerRoot }),
+  setSidebarMode: (sidebarMode) => set({ sidebarMode }),
   setWorkspaceView: (workspaceView) => {
     // An empty editor has nothing to show; stay on the terminal instead.
     if (workspaceView === 'editor' && get().documents.length === 0) return;
@@ -114,7 +143,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       ),
     }));
     return () => {
-      if (editors.get(id) === handle) editors.delete(id);
+      if (editors.get(id) !== handle) return;
+      const snapshot = handle.readRecoverySnapshot?.();
+      editors.delete(id);
+      if (snapshot)
+        set((state) => ({
+          documents: state.documents.map((doc) => (doc.id === id ? { ...doc, ...snapshot } : doc)),
+        }));
     };
   },
   saveFile: (id) => {

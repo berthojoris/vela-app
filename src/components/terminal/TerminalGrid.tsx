@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import React, { lazy, Suspense } from 'react';
 import { useTerminalStore } from '../../stores/useTerminalStore';
 import { useWorktreeStore } from '../../stores/useWorktreeStore';
@@ -18,7 +19,16 @@ export const TerminalGrid: React.FC<TerminalGridProps> = ({
   isWorkspaceActive = true,
 }) => {
   const { sessions, activeSessionId, primarySessionId, secondarySessionId, splitMode, setActiveSession } =
-    useTerminalStore();
+    useTerminalStore(
+      useShallow((state) => ({
+        sessions: state.sessions,
+        activeSessionId: state.activeSessionId,
+        primarySessionId: state.primarySessionId,
+        secondarySessionId: state.secondarySessionId,
+        splitMode: state.splitMode,
+        setActiveSession: state.setActiveSession,
+      }))
+    );
 
   const repoPath = useWorktreeStore((state) => state.repoPath);
 

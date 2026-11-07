@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useDiffStore } from '../../stores/useDiffStore';
 import { useDialog } from '../../lib/useDialog';
@@ -43,7 +44,32 @@ export const DiffViewerModal: React.FC = () => {
     resetAll,
     clearCommitError,
     clearRollbackError,
-  } = useDiffStore();
+  } = useDiffStore(
+    useShallow((state) => ({
+      isOpen: state.isOpen,
+      worktreePath: state.worktreePath,
+      diffs: state.diffs,
+      selectedFile: state.selectedFile,
+      isLoading: state.isLoading,
+      isCommitting: state.isCommitting,
+      isRollingBack: state.isRollingBack,
+      rollingBackFile: state.rollingBackFile,
+      error: state.error,
+      commitError: state.commitError,
+      rollbackError: state.rollbackError,
+      commitMessage: state.commitMessage,
+      commitResult: state.commitResult,
+      closeDiffModal: state.closeDiffModal,
+      selectFile: state.selectFile,
+      setCommitMessage: state.setCommitMessage,
+      refreshDiffs: state.refreshDiffs,
+      commit: state.commit,
+      rollbackFile: state.rollbackFile,
+      resetAll: state.resetAll,
+      clearCommitError: state.clearCommitError,
+      clearRollbackError: state.clearRollbackError,
+    }))
+  );
 
   const [searchQuery, setSearchQuery] = useState('');
   const [copied, setCopied] = useState(false);

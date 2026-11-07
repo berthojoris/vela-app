@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { FileCode2, Loader2, Save, X } from 'lucide-react';
 import { isDirty, useEditorStore } from '../../stores/useEditorStore';
@@ -8,7 +9,16 @@ import { UnsavedDialog } from './UnsavedDialog';
 const CodeEditor = lazy(() => import('./CodeEditor').then((module) => ({ default: module.CodeEditor })));
 
 export function EditorWorkspace() {
-  const { documents, activeDocumentId, workspaceView, activate, saveFile, closeFile } = useEditorStore();
+  const { documents, activeDocumentId, workspaceView, activate, saveFile, closeFile } = useEditorStore(
+    useShallow((state) => ({
+      documents: state.documents,
+      activeDocumentId: state.activeDocumentId,
+      workspaceView: state.workspaceView,
+      activate: state.activate,
+      saveFile: state.saveFile,
+      closeFile: state.closeFile,
+    }))
+  );
   const [closeTarget, setCloseTarget] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [closeError, setCloseError] = useState<string | null>(null);
@@ -124,6 +134,10 @@ export function EditorWorkspace() {
         }
       }
       if (closeTarget === 'window') {
+        if (discard) {
+          // Explicit discard also removes the recovery draft before leaving.
+          for (const doc of targets) if (isDirty(doc)) closeFile(doc.id, true);
+        }
         await tauriIpc.closeWindow(true);
       } else {
         closeFile(closeTarget, discard);

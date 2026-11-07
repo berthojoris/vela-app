@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   GitBranch,
@@ -28,6 +29,7 @@ import { useNoticeStore } from '../../stores/useNoticeStore';
 import { tauriIpc } from '../../lib/tauriIpc';
 import { formatTabTitle } from '../../lib/shellIntegration';
 import { FileExplorer } from './FileExplorer';
+import { useEditorStore } from '../../stores/useEditorStore';
 
 interface WorktreeSidebarProps {
   onOpenCreateModal: () => void;
@@ -40,8 +42,14 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
   const [removing, setRemoving] = useState(false);
   const [openingDirectory, setOpeningDirectory] = useState(false);
   const removingRef = useRef(false);
-  const [mode, setMode] = useState<'git' | 'files'>('git');
-  const [explorerRoot, setExplorerRoot] = useState<string | null>(null);
+  const { mode, setMode, explorerRoot, setExplorerRoot } = useEditorStore(
+    useShallow((state) => ({
+      mode: state.sidebarMode,
+      setMode: state.setSidebarMode,
+      explorerRoot: state.explorerRoot,
+      setExplorerRoot: state.setExplorerRoot,
+    }))
+  );
   const [choosingFolder, setChoosingFolder] = useState(false);
   const [launchingWorktree, setLaunchingWorktree] = useState<string | null>(null);
   const [branchSwitcher, setBranchSwitcher] = useState<{ path: string; branch: string } | null>(null);
@@ -66,10 +74,34 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
     removeWorktree,
     selectWorktree,
     clearError,
-  } = useWorktreeStore();
+  } = useWorktreeStore(
+    useShallow((state) => ({
+      repoPath: state.repoPath,
+      worktrees: state.worktrees,
+      activeWorktreeId: state.activeWorktreeId,
+      activeSessionCwd: state.activeSessionCwd,
+      isLoading: state.isLoading,
+      isMutating: state.isMutating,
+      error: state.error,
+      autoGitStatus: state.autoGitStatus,
+      statusRevision: state.statusRevision,
+      toggleAutoGitStatus: state.toggleAutoGitStatus,
+      refreshWorktrees: state.refreshWorktrees,
+      removeWorktree: state.removeWorktree,
+      selectWorktree: state.selectWorktree,
+      clearError: state.clearError,
+    }))
+  );
 
-  const { sessions, activeSessionId, setActiveSession, createSession } = useTerminalStore();
-  const { openDiffModal } = useDiffStore();
+  const { sessions, activeSessionId, setActiveSession, createSession } = useTerminalStore(
+    useShallow((state) => ({
+      sessions: state.sessions,
+      activeSessionId: state.activeSessionId,
+      setActiveSession: state.setActiveSession,
+      createSession: state.createSession,
+    }))
+  );
+  const { openDiffModal } = useDiffStore(useShallow((state) => ({ openDiffModal: state.openDiffModal })));
 
   const activeSession = sessions.find((s) => s.id === activeSessionId);
   const currentCwd = activeSession?.cwd || activeSessionCwd;

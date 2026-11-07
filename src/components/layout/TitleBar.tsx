@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import React, { useState, useEffect } from 'react';
 import { Minus, X, GitBranch, FolderGit2 } from 'lucide-react';
 import { tauriIpc } from '../../lib/tauriIpc';
@@ -106,8 +107,17 @@ export const TitleBar: React.FC = () => {
     }
   };
 
-  const { sessions, activeSessionId } = useTerminalStore();
-  const { repoPath, worktrees, activeWorktreeId, activeSessionCwd } = useWorktreeStore();
+  const { sessions, activeSessionId } = useTerminalStore(
+    useShallow((state) => ({ sessions: state.sessions, activeSessionId: state.activeSessionId }))
+  );
+  const { repoPath, worktrees, activeWorktreeId, activeSessionCwd } = useWorktreeStore(
+    useShallow((state) => ({
+      repoPath: state.repoPath,
+      worktrees: state.worktrees,
+      activeWorktreeId: state.activeWorktreeId,
+      activeSessionCwd: state.activeSessionCwd,
+    }))
+  );
   const activeSession = sessions.find((s) => s.id === activeSessionId);
   const currentCwd = activeSession?.cwd || activeSessionCwd;
 

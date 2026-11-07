@@ -60,6 +60,15 @@ it('guards Ctrl+W and discards only after confirmation', async () => {
   await waitFor(() => expect(useEditorStore.getState().documents).toHaveLength(0));
 });
 
+it('removes discarded recovery drafts before confirming a window close', async () => {
+  render(<EditorWorkspace />);
+  fireEvent.change(await screen.findByLabelText('Code'), { target: { value: 'discard this draft' } });
+  act(() => ipc.onCloseBlockedByUnsavedFiles.mock.calls[0][0]());
+  fireEvent.click(screen.getByRole('button', { name: "Don't Save" }));
+  await waitFor(() => expect(ipc.closeWindow).toHaveBeenCalledWith(true));
+  expect(useEditorStore.getState().documents).toHaveLength(0);
+});
+
 it('reports unsaved files to the backend close guard and releases it once saved', async () => {
   const { unmount } = render(<EditorWorkspace />);
   expect(ipc.setUnsavedEditorChanges).toHaveBeenLastCalledWith(false);

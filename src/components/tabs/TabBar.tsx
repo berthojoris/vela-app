@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import React, { useState, useEffect, useCallback } from 'react';
 import { useTerminalStore } from '../../stores/useTerminalStore';
 import { NewTabDropdown } from './NewTabDropdown';
@@ -21,7 +22,19 @@ export const TabBar: React.FC<TabBarProps> = ({ onOpenTerminalModal }) => {
     setSplitMode,
     renameSession,
     reorderSessions,
-  } = useTerminalStore();
+  } = useTerminalStore(
+    useShallow((state) => ({
+      sessions: state.sessions,
+      activeSessionId: state.activeSessionId,
+      secondarySessionId: state.secondarySessionId,
+      splitMode: state.splitMode,
+      setActiveSession: state.setActiveSession,
+      closeSession: state.closeSession,
+      setSplitMode: state.setSplitMode,
+      renameSession: state.renameSession,
+      reorderSessions: state.reorderSessions,
+    }))
+  );
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');

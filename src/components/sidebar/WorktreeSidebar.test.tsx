@@ -5,12 +5,14 @@ import { useWorktreeStore } from '../../stores/useWorktreeStore';
 import { worktree } from '../../test/helpers';
 import { WorktreeSidebar } from './WorktreeSidebar';
 import { useTerminalStore } from '../../stores/useTerminalStore';
+import { useEditorStore } from '../../stores/useEditorStore';
 
 const ipc = vi.hoisted(() => ({ listWorktrees: vi.fn(), listDirectory: vi.fn(), selectDirectory: vi.fn() }));
 vi.mock('../../lib/tauriIpc', () => ({ tauriIpc: ipc }));
 beforeEach(() => {
   useWorktreeStore.setState(useWorktreeStore.getInitialState());
   useTerminalStore.setState(useTerminalStore.getInitialState());
+  useEditorStore.setState(useEditorStore.getInitialState());
   ipc.listDirectory
     .mockReset()
     .mockResolvedValue({ entries: [{ name: 'README.md', path: 'README.md', is_dir: false }], truncated: false });

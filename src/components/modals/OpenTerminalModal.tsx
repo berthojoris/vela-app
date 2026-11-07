@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import React, { useState, useEffect, useRef } from 'react';
 import { Folder, FolderOpen, Terminal, X, Columns2, Check, Loader2 } from 'lucide-react';
 import { TerminalIcon } from '../terminal/TerminalIcon';
@@ -21,9 +22,24 @@ export const OpenTerminalModal: React.FC<OpenTerminalModalProps> = ({
   initialDirectory,
   initialProfileId,
 }) => {
-  const { profiles, createSession, setSplitMode, sessions, defaultProfileId, fetchProfiles } = useTerminalStore();
+  const { profiles, createSession, setSplitMode, sessions, defaultProfileId, fetchProfiles } = useTerminalStore(
+    useShallow((state) => ({
+      profiles: state.profiles,
+      createSession: state.createSession,
+      setSplitMode: state.setSplitMode,
+      sessions: state.sessions,
+      defaultProfileId: state.defaultProfileId,
+      fetchProfiles: state.fetchProfiles,
+    }))
+  );
 
-  const { repoPath, worktrees, activeWorktreeId } = useWorktreeStore();
+  const { repoPath, worktrees, activeWorktreeId } = useWorktreeStore(
+    useShallow((state) => ({
+      repoPath: state.repoPath,
+      worktrees: state.worktrees,
+      activeWorktreeId: state.activeWorktreeId,
+    }))
+  );
   const activeWorktree = worktrees.find((w) => w.id === activeWorktreeId);
 
   const [targetDir, setTargetDir] = useState('');

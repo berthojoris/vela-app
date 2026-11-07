@@ -7,7 +7,8 @@ import { keymap } from '@codemirror/view';
 import { languages } from '@codemirror/language-data';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { LanguageDescription } from '@codemirror/language';
-import { useEditorStore, type EditorDocument } from '../../stores/useEditorStore';
+import { notifyEditorContentChanged, useEditorStore, type EditorDocument } from '../../stores/useEditorStore';
+import { useNoticeStore } from '../../stores/useNoticeStore';
 
 const theme = EditorView.theme(
   {
@@ -51,12 +52,25 @@ export function CodeEditor({ document, active }: { document: EditorDocument; act
           oneDark,
           theme,
           EditorState.tabSize.of(2),
+          EditorState.transactionFilter.of((transaction) => {
+            if (transaction.docChanged && transaction.newDoc.length > 2 * 1024 * 1024) {
+              useNoticeStore
+                .getState()
+                .report(
+                  'Editor limit',
+                  'This edit exceeds the text buffer limit. Reduce the paste size so the file and its recovery draft stay within the supported limit.'
+                );
+              return [];
+            }
+            return transaction;
+          }),
           keymap.of([indentWithTab]),
           language.of([]),
           EditorView.contentAttributes.of({ 'aria-label': `Edit ${document.path}`, spellcheck: 'false' }),
           EditorView.updateListener.of((update) => {
             if (update.docChanged && savedDoc) {
               useEditorStore.getState().setDirty(document.id, !update.state.doc.eq(savedDoc));
+              notifyEditorContentChanged();
             }
             if (update.selectionSet || update.docChanged) {
               const head = update.state.selection.main.head;
@@ -67,9 +81,10 @@ export function CodeEditor({ document, active }: { document: EditorDocument; act
         ],
       }),
     });
-    savedDoc = editor.state.doc;
+    savedDoc = document.dirty ? EditorState.create({ doc: document.savedContent }).doc : editor.state.doc;
     view.current = editor;
     const unregisterEditor = useEditorStore.getState().registerEditor(document.id, {
+      readRecoverySnapshot: () => ({ content: editor.state.doc.toString(), savedContent: savedDoc!.toString() }),
       readSnapshot: () => {
         const snapshot = editor.state.doc;
         return {

@@ -75,7 +75,15 @@ Click **Open Files** (above **Open Dir**) to browse the active terminal director
 
 The editor supports UTF-8 text files up to 2 MiB and 20 open tabs. LF/CRLF and UTF-8 BOM are preserved; binary files, other encodings, and mixed/legacy line endings are refused. Folder listings are capped at 5,000 entries; Git metadata and links outside the Explorer root are excluded. Filesystem permissions still apply.
 
-Save with **Ctrl+S** or the Save button. Unsaved tabs show a dot, and closing a dirty tab or the native window asks whether to save, discard, or cancel. If the disk content changed since opening/saving, Vela refuses to overwrite it and keeps your edits. Copy your edits before discarding and reopening to resolve a conflict. Files are replaced through a temporary sibling file rather than truncated in place. Open editor tabs are not restored after restarting Vela. The browser-only preview cannot read or save real files.
+Save with **Ctrl+S** or the Save button. Unsaved tabs show a dot, and closing a dirty tab or the native window asks whether to save, discard, or cancel. If the disk content changed since opening/saving, Vela refuses to overwrite it and keeps your edits. Copy your edits before discarding and reopening to resolve a conflict. Files are replaced through a temporary sibling file rather than truncated in place. Open tabs and unsaved drafts are restored after restarting Vela; see Workspace recovery below. The browser-only preview cannot read or save real files.
+
+### Workspace recovery
+
+Vela stores terminal tab order, titles, directories, split layout/focus, open editor tabs, the selected workspace view, and the Files sidebar context in local WebView2 IndexedDB. Only dirty files need a text backup; clean files are read again from disk. Drafts keep their original revision and saved text, so a changed or missing disk file never silently replaces recovered edits. Explicit **Don't Save** removes the discarded draft from recovery too.
+
+Recovery writes run after 500 ms of inactivity, or every 2 seconds during continuous editing, with at most one active write and one newer snapshot queued. The app's close command waits for pending recovery data. A crash or forced process termination can still lose the last unsnapshotted edits; this is recovery, not a replacement for Ctrl+S. Storage errors are reported in the workspace. Recovery data stays on this machine and includes file paths and unsaved source text.
+
+Terminal recovery starts fresh shells, using installed plain-shell profiles and falling back to the default installed shell if the original is unavailable. It does not restore scrollback, running programs, or execute saved commands. Agent tabs return as labelled shells so you can relaunch the agent deliberately. Failed directory/shell restores report an error without preventing other tabs or drafts from opening. A first launch with no saved workspace remains empty.
 
 ### Git and terminal operations
 
@@ -86,7 +94,7 @@ Save with **Ctrl+S** or the Save button. Unsaved tabs show a dot, and closing a 
 - Per-file rollback restores both sides of a detected rename. Paths with multiple Git status entries cannot be rolled back individually; resolve them in the terminal or explicitly review Reset All. Git status failures are shown as unavailable, never as clean.
 - Worktree removal requires confirmation, refuses active terminal directories in the UI, and lets Git protect dirty worktrees. The main worktree cannot be removed.
 - App close is blocked while an in-process Git write is running. On exit, Vela terminates its terminal process trees; it does not terminate external terminals.
-- A failed terminal can be closed without losing the rest of the workspace. Session restoration across app restarts is not implemented.
+- A failed terminal can be closed without losing the rest of the workspace. After restart, terminal tabs reopen as fresh installed shells in their saved directories; agent commands and process state are not replayed.
 
 Local diagnostics: `%LOCALAPPDATA%/Vela/logs/errors.log`, rotated at roughly 256 KiB with one previous file. Logs contain error details and may contain paths; terminal streams are not logged and diagnostics are not uploaded.
 

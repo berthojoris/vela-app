@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Plus, ChevronDown, Sparkles, FolderOpen } from 'lucide-react';
@@ -19,8 +20,16 @@ export const NewTabDropdown: React.FC<NewTabDropdownProps> = ({ onOpenTerminalMo
   const launchRef = useRef(false);
   const [launching, setLaunching] = useState(false);
   const [position, setPosition] = useState({ left: 0, top: 0 });
-  const { profiles, createSession } = useTerminalStore();
-  const { repoPath, worktrees, activeWorktreeId } = useWorktreeStore();
+  const { profiles, createSession } = useTerminalStore(
+    useShallow((state) => ({ profiles: state.profiles, createSession: state.createSession }))
+  );
+  const { repoPath, worktrees, activeWorktreeId } = useWorktreeStore(
+    useShallow((state) => ({
+      repoPath: state.repoPath,
+      worktrees: state.worktrees,
+      activeWorktreeId: state.activeWorktreeId,
+    }))
+  );
 
   const activeWorktree = worktrees.find((w) => w.id === activeWorktreeId);
   const defaultCwd = activeWorktree?.path || repoPath || '';

@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { prepareWindowClose } from './windowClosePreparation';
 import {
   AgentType,
   DirectoryListing,
@@ -252,6 +253,7 @@ export const tauriIpc = {
 
   async closeWindow(unsavedChangesConfirmed = false): Promise<void> {
     if (!isTauri()) return;
+    await prepareWindowClose();
     await invoke('close_window', { unsavedChangesConfirmed });
   },
 

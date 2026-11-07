@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import React, { useEffect, useState } from 'react';
 import { TitleBar } from './components/layout/TitleBar';
 import { TabBar } from './components/tabs/TabBar';
@@ -21,13 +22,24 @@ export const App: React.FC = () => {
   const [isCreateWorktreeOpen, setIsCreateWorktreeOpen] = useState(false);
   const [isOpenTerminalModalOpen, setIsOpenTerminalModalOpen] = useState(false);
   const [modalInitialProfileId, setModalInitialProfileId] = useState<string | undefined>(undefined);
-  const { fetchProfiles, sessions, activeSessionId } = useTerminalStore();
-  const { initRepo, syncWithSession, refreshWorktrees, refreshWorktreeBranches, autoGitStatus } = useWorktreeStore();
+  const fetchProfiles = useTerminalStore((state) => state.fetchProfiles);
+  const sessionCount = useTerminalStore((state) => state.sessions.length);
+  const activeSessionCwd = useTerminalStore(
+    (state) => state.sessions.find((session) => session.id === state.activeSessionId)?.cwd
+  );
+  const { initRepo, syncWithSession, refreshWorktrees, refreshWorktreeBranches, autoGitStatus } = useWorktreeStore(
+    useShallow((state) => ({
+      initRepo: state.initRepo,
+      syncWithSession: state.syncWithSession,
+      refreshWorktrees: state.refreshWorktrees,
+      refreshWorktreeBranches: state.refreshWorktreeBranches,
+      autoGitStatus: state.autoGitStatus,
+    }))
+  );
   const isDiffOpen = useDiffStore((state) => state.isOpen);
   const workspaceView = useEditorStore((state) => state.workspaceView);
   const editorDocumentCount = useEditorStore((state) => state.documents.length);
   const setWorkspaceView = useEditorStore((state) => state.setWorkspaceView);
-  const activeSessionCwd = sessions.find((session) => session.id === activeSessionId)?.cwd;
 
   const handleOpenTerminalModal = (profileId?: string) => {
     setWorkspaceView('terminal');
@@ -71,10 +83,10 @@ export const App: React.FC = () => {
   useEffect(() => {
     if (activeSessionCwd !== undefined) {
       syncWithSession({ cwd: activeSessionCwd });
-    } else if (sessions.length === 0) {
+    } else if (sessionCount === 0) {
       syncWithSession(null);
     }
-  }, [activeSessionId, sessions.length, activeSessionCwd, syncWithSession]);
+  }, [sessionCount, activeSessionCwd, syncWithSession]);
 
   // Auto-refresh worktrees periodically and on window focus (paused while modals are open or autoGitStatus is OFF)
   useEffect(() => {

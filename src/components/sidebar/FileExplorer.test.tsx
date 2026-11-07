@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { FileExplorer } from './FileExplorer';
 import { explorerReducer } from '../../lib/explorerCache';
@@ -62,8 +62,9 @@ it('virtualizes 5000 entries and preserves keyboard navigation across the window
     truncated: false,
   });
   render(<FileExplorer root="C:/repo" />);
-  await screen.findByRole('treeitem', { name: 'file0.ts' });
-  const rendered = screen.getAllByRole('treeitem');
+  const tree = within(screen.getByRole('tree', { name: 'Files and folders' }));
+  await tree.findByRole('treeitem', { name: 'file0.ts', hidden: true });
+  const rendered = tree.getAllByRole('treeitem', { hidden: true });
   expect(rendered.length).toBeLessThan(60);
   // Cross the rendered boundary directly instead of repeatedly traversing the
   // viewport; this checks the offscreen focus path even on a busy build machine.
@@ -72,7 +73,7 @@ it('virtualizes 5000 entries and preserves keyboard navigation across the window
   last.focus();
   fireEvent.keyDown(last, { key: 'ArrowDown' });
   expect(document.activeElement?.textContent).toBe(`file${nextIndex}.ts`);
-  expect(screen.getAllByRole('treeitem').length).toBeLessThan(60);
+  expect(tree.getAllByRole('treeitem', { hidden: true }).length).toBeLessThan(60);
 });
 
 it('loads directories lazily and opens files only on double click or Enter', async () => {

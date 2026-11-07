@@ -4,6 +4,7 @@ import App from './App';
 import './index.css';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { tauriIpc } from './lib/tauriIpc';
+import { initializeWorkspaceRecovery } from './lib/workspaceRecovery';
 
 /**
  * Renders the workspace immediately and reveals the window once React mounts.
@@ -26,3 +27,5 @@ ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
     <Root />
   </React.StrictMode>
 );
+
+void initializeWorkspaceRecovery();

@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import React, { useEffect, useRef, useState } from 'react';
 import { GitBranch, X } from 'lucide-react';
 import { useWorktreeStore } from '../../stores/useWorktreeStore';
@@ -17,8 +18,16 @@ export const CreateWorktreeModal: React.FC<{ isOpen: boolean; onClose: () => voi
   const busyRef = useRef(false);
   const launchedRef = useRef(false);
   const wasOpenRef = useRef(false);
-  const { createWorktree, repoPath } = useWorktreeStore();
-  const { createSession, profiles, defaultProfileId } = useTerminalStore();
+  const { createWorktree, repoPath } = useWorktreeStore(
+    useShallow((state) => ({ createWorktree: state.createWorktree, repoPath: state.repoPath }))
+  );
+  const { createSession, profiles, defaultProfileId } = useTerminalStore(
+    useShallow((state) => ({
+      createSession: state.createSession,
+      profiles: state.profiles,
+      defaultProfileId: state.defaultProfileId,
+    }))
+  );
   const dialogRef = useDialog(isOpen, onClose, isSubmitting, () => !launchedRef.current);
   useEffect(() => {
     if (isOpen && !wasOpenRef.current) {

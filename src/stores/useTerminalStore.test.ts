@@ -20,10 +20,11 @@ it('coalesces slow shell discovery requests and permits a later refresh', async 
   const pending = deferred<[]>();
   ipc.getShellProfiles.mockReset().mockReturnValueOnce(pending.promise).mockResolvedValue([]);
   const first = store.getState().fetchProfiles();
-  await Promise.all(Array.from({ length: 20 }, () => store.getState().fetchProfiles()));
+  const callers = Array.from({ length: 20 }, () => store.getState().fetchProfiles());
+  expect(callers.every((promise) => promise === first)).toBe(true);
   expect(ipc.getShellProfiles).toHaveBeenCalledTimes(1);
   pending.resolve([]);
-  await first;
+  await Promise.all([first, ...callers]);
   await store.getState().fetchProfiles();
   expect(ipc.getShellProfiles).toHaveBeenCalledTimes(2);
 });

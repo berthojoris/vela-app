@@ -22,6 +22,7 @@ interface TerminalState {
     worktreeId?: string;
     isAgent?: boolean;
     agentType?: AgentType | null;
+    activate?: boolean;
   }) => Promise<TerminalSession>;
   closeSession: (id: string) => Promise<void>;
   markSessionExited: (id: string) => void;
@@ -37,7 +38,7 @@ interface TerminalState {
 
 // Drop the retired recent-directory history from older builds
 let pendingLaunches = 0;
-let profileFetchPending = false;
+let profileFetchPending: Promise<void> | null = null;
 try {
   localStorage.removeItem('vela_recent_dirs');
   localStorage.removeItem('orca_recent_dirs');
@@ -96,8 +97,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
       set((state) => ({
         sessions: [...state.sessions, { ...newSession, exited: false }],
-        activeSessionId: newSession.id,
-        primarySessionId: newSession.id,
+        ...(params.activate !== false ? { activeSessionId: newSession.id, primarySessionId: newSession.id } : {}),
       }));
 
       return newSession;
@@ -183,22 +183,24 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }
   },
 
-  fetchProfiles: async () => {
-    if (profileFetchPending) return;
-    profileFetchPending = true;
-    try {
-      const profiles = await tauriIpc.getShellProfiles();
-      // Prefer a plain shell: agent profiles are only offered when installed.
-      const defaultProfile = profiles.find((profile) => !profile.is_agent) ?? profiles[0];
-      set({
-        profiles,
-        defaultProfileId: defaultProfile?.id || '',
-      });
-    } catch (e) {
-      useNoticeStore.getState().report('Unable to load shell profiles. You can retry from the terminal dialog', e);
-    } finally {
-      profileFetchPending = false;
-    }
+  fetchProfiles: () => {
+    if (profileFetchPending) return profileFetchPending;
+    profileFetchPending = (async () => {
+      try {
+        const profiles = await tauriIpc.getShellProfiles();
+        // Prefer a plain shell: agent profiles are only offered when installed.
+        const defaultProfile = profiles.find((profile) => !profile.is_agent) ?? profiles[0];
+        set({
+          profiles,
+          defaultProfileId: defaultProfile?.id || '',
+        });
+      } catch (e) {
+        useNoticeStore.getState().report('Unable to load shell profiles. You can retry from the terminal dialog', e);
+      } finally {
+        profileFetchPending = null;
+      }
+    })();
+    return profileFetchPending;
   },
 
   renameSession: (id: string, newTitle: string) => {
