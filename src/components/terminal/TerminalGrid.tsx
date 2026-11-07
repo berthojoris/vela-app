@@ -124,6 +124,8 @@ export const TerminalGrid: React.FC<TerminalGridProps> = ({
           >
             <ErrorBoundary
               onClose={() => {
+                // A crash boundary is an intentional bypass of the close confirmation:
+                // the pane could not render, so there is nothing left to protect.
                 void useTerminalStore
                   .getState()
                   .closeSession(session.id)

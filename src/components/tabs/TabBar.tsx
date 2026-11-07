@@ -1,11 +1,12 @@
 import { useShallow } from 'zustand/react/shallow';
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useTerminalStore } from '../../stores/useTerminalStore';
 import { NewTabDropdown } from './NewTabDropdown';
 import { TerminalIcon } from '../terminal/TerminalIcon';
 import { X, Columns2, Rows2, Square } from 'lucide-react';
 import { useNoticeStore } from '../../stores/useNoticeStore';
 import { useEditorStore } from '../../stores/useEditorStore';
+import { CloseTerminalModal } from '../modals/CloseTerminalModal';
 
 interface TabBarProps {
   onOpenTerminalModal: () => void;
@@ -39,6 +40,12 @@ export const TabBar: React.FC<TabBarProps> = ({ onOpenTerminalModal }) => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
   const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [pendingCloseId, setPendingCloseId] = useState<string | null>(null);
+  const [isClosing, setIsClosing] = useState(false);
+  const closeGuardRef = useRef(false);
+  const pendingCloseSession = pendingCloseId
+    ? (sessions.find((session) => session.id === pendingCloseId) ?? null)
+    : null;
 
   const handleCloseSession = useCallback(
     async (id: string) => {
@@ -50,6 +57,33 @@ export const TabBar: React.FC<TabBarProps> = ({ onOpenTerminalModal }) => {
     },
     [closeSession]
   );
+
+  // Ask before ending a live process; a tab whose process already exited closes straight away.
+  const requestCloseSession = useCallback(
+    (id: string) => {
+      const session = sessions.find((candidate) => candidate.id === id);
+      if (!session) return;
+      if (session.exited) {
+        void handleCloseSession(id);
+        return;
+      }
+      setPendingCloseId(id);
+    },
+    [sessions, handleCloseSession]
+  );
+
+  const confirmCloseSession = useCallback(async () => {
+    if (!pendingCloseId || closeGuardRef.current) return;
+    closeGuardRef.current = true;
+    setIsClosing(true);
+    try {
+      await handleCloseSession(pendingCloseId);
+    } finally {
+      closeGuardRef.current = false;
+      setIsClosing(false);
+      setPendingCloseId(null);
+    }
+  }, [pendingCloseId, handleCloseSession]);
 
   // Global Ctrl+T / Ctrl+W / Ctrl+Tab / Ctrl+1..9 shortcuts
   useEffect(() => {
@@ -88,13 +122,13 @@ export const TabBar: React.FC<TabBarProps> = ({ onOpenTerminalModal }) => {
         onOpenTerminalModal();
       } else if (key === 'w') {
         if (activeSessionId) {
-          void handleCloseSession(activeSessionId);
+          requestCloseSession(activeSessionId);
         }
       }
     };
     window.addEventListener('keydown', handleKeyDown, true);
     return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [activeSessionId, onOpenTerminalModal, handleCloseSession, sessions, setActiveSession]);
+  }, [activeSessionId, onOpenTerminalModal, requestCloseSession, sessions, setActiveSession]);
 
   const handleStartRename = (id: string, currentTitle: string) => {
     setEditingId(id);
@@ -179,10 +213,11 @@ export const TabBar: React.FC<TabBarProps> = ({ onOpenTerminalModal }) => {
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  void handleCloseSession(session.id);
+                  requestCloseSession(session.id);
                 }}
                 className="opacity-0 group-hover:opacity-100 hover:bg-orca-hover hover:text-orca-rose rounded p-0.5 transition-all text-orca-muted"
                 title="Close Tab (Ctrl+W)"
+                aria-label={`Close ${session.title} tab`}
               >
                 <X className="w-3 h-3" />
               </button>
@@ -240,6 +275,13 @@ export const TabBar: React.FC<TabBarProps> = ({ onOpenTerminalModal }) => {
           <Rows2 className="w-3.5 h-3.5" />
         </button>
       </div>
+
+      <CloseTerminalModal
+        session={pendingCloseSession}
+        isClosing={isClosing}
+        onCancel={() => setPendingCloseId(null)}
+        onConfirm={() => void confirmCloseSession()}
+      />
     </div>
   );
 };
