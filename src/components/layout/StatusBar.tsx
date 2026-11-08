@@ -7,11 +7,23 @@ import { version as bundleVersion } from '../../../package.json';
 import { isTauri } from '../../lib/tauriIpc';
 
 export const StatusBar: React.FC = () => {
-  const { sessions, splitMode } = useTerminalStore(
-    useShallow((state) => ({ sessions: state.sessions, splitMode: state.splitMode }))
+  const { sessionCount, activeAgents, splitMode } = useTerminalStore(
+    useShallow((state) => ({
+      sessionCount: state.sessions.length,
+      activeAgents: state.sessions.reduce((count, s) => count + (s.is_agent && !s.exited ? 1 : 0), 0),
+      splitMode: state.splitMode,
+    }))
   );
-  const { activeWorktreeId, worktrees } = useWorktreeStore(
-    useShallow((state) => ({ activeWorktreeId: state.activeWorktreeId, worktrees: state.worktrees }))
+  const { hasActiveWorktree, branch, dirtyCount, statusError } = useWorktreeStore(
+    useShallow((state) => {
+      const wt = state.worktrees.find((w) => w.id === state.activeWorktreeId);
+      return {
+        hasActiveWorktree: Boolean(wt),
+        branch: wt?.branch ?? '',
+        dirtyCount: wt?.dirty_files_count ?? null,
+        statusError: wt?.status_error ?? null,
+      };
+    })
   );
   // Never hardcode this string: the bundled package.json version is the initial/fallback
   // value, and the running binary's real version (tauri.conf.json -> ProductVersion)
@@ -35,9 +47,6 @@ export const StatusBar: React.FC = () => {
     };
   }, []);
 
-  const activeWorktree = worktrees.find((w) => w.id === activeWorktreeId);
-  const activeAgents = sessions.filter((s) => s.is_agent && !s.exited).length;
-
   return (
     <footer className="h-6 shrink-0 bg-orca-darker border-t border-orca-border flex items-center justify-between px-3 text-[11px] text-orca-muted select-none font-mono">
       {/* Left items */}
@@ -48,21 +57,16 @@ export const StatusBar: React.FC = () => {
           <span className="text-[10px] text-orca-muted">v{appVersion}</span>
         </div>
 
-        {activeWorktree && (
+        {hasActiveWorktree && (
           <div className="flex items-center gap-1 border-l border-orca-border pl-3">
             <span className="text-orca-muted">Worktree:</span>
-            <span className="text-orca-text font-semibold">{activeWorktree.branch}</span>
-            {activeWorktree.dirty_files_count === null ? (
-              <span
-                className="text-orca-muted ml-1"
-                title={activeWorktree.status_error || 'Refresh to check Git status'}
-              >
-                ({activeWorktree.status_error ? 'status unavailable' : 'not checked'})
+            <span className="text-orca-text font-semibold">{branch}</span>
+            {dirtyCount === null ? (
+              <span className="text-orca-muted ml-1" title={statusError || 'Refresh to check Git status'}>
+                ({statusError ? 'status unavailable' : 'not checked'})
               </span>
             ) : (
-              activeWorktree.dirty_files_count > 0 && (
-                <span className="text-orca-amber ml-1">({activeWorktree.dirty_files_count} modified)</span>
-              )
+              dirtyCount > 0 && <span className="text-orca-amber ml-1">({dirtyCount} modified)</span>
             )}
           </div>
         )}
@@ -72,7 +76,7 @@ export const StatusBar: React.FC = () => {
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-1.5">
           <TermIcon className="w-3 h-3 text-orca-muted" />
-          <span>{sessions.length} sessions</span>
+          <span>{sessionCount} sessions</span>
         </div>
 
         {activeAgents > 0 && (

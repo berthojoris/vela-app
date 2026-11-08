@@ -55,6 +55,8 @@ fn capture<R: PipeReader + 'static>(
         .spawn(move || {
             let mut bytes = Vec::new();
             let mut buffer = [0; 8192];
+            #[cfg(windows)]
+            let mut idle_polls: u32 = 0;
             while !stopping.load(Ordering::Acquire) {
                 #[cfg(windows)]
                 let capacity = {
@@ -82,9 +84,12 @@ fn capture<R: PipeReader + 'static>(
                         return;
                     }
                     if available == 0 {
-                        std::thread::sleep(Duration::from_millis(10));
+                        let wait_ms = if idle_polls < 5 { 2 } else { 10 };
+                        idle_polls = idle_polls.saturating_add(1);
+                        std::thread::sleep(Duration::from_millis(wait_ms));
                         continue;
                     }
+                    idle_polls = 0;
                     buffer.len().min(available as usize)
                 };
                 #[cfg(not(windows))]
@@ -160,6 +165,7 @@ pub fn output(command: &mut Command, timeout: Duration, limit: usize) -> Result<
         }
     };
     let started = Instant::now();
+    let mut wait_polls: u32 = 0;
     let status = loop {
         if exceeded.load(Ordering::Acquire) || started.elapsed() >= timeout {
             // Closing the job kills descendants even if the root already exited.
@@ -175,7 +181,11 @@ pub fn output(command: &mut Command, timeout: Duration, limit: usize) -> Result<
         }
         match child.try_wait() {
             Ok(Some(status)) => break status,
-            Ok(None) => std::thread::sleep(Duration::from_millis(15)),
+            Ok(None) => {
+                let wait_ms = if wait_polls < 5 { 2 } else { 15 };
+                wait_polls = wait_polls.saturating_add(1);
+                std::thread::sleep(Duration::from_millis(wait_ms));
+            }
             Err(error) => {
                 let _ = child.kill();
                 let _ = child.wait();

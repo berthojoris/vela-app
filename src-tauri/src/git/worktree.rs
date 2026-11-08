@@ -125,36 +125,12 @@ impl GitManager {
             2 * 1024 * 1024,
         )?)?;
         let text = String::from_utf8_lossy(&result.stdout);
-        let mut worktrees = Vec::new();
+        let mut raw_worktrees: Vec<(String, String)> = Vec::new();
         let mut current: Option<(String, String)> = None;
-        let mut append = |path: String, branch: String| -> Result<(), String> {
-            let (count, status_error) = if check_status {
-                match Self::status(&path) {
-                    Ok(entries) => (Some(entries.len()), None),
-                    Err(error) => (None, Some(error)),
-                }
-            } else {
-                (None, None)
-            };
-            worktrees.push(GitWorktree {
-                id: Self::generate_worktree_id(&path),
-                name: Path::new(&path)
-                    .file_name()
-                    .map(|name| name.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "worktree".into()),
-                path: path.replace('\\', "/"),
-                branch,
-                is_main: worktrees.is_empty(),
-                dirty_files_count: count,
-                status_error,
-                active_agent_name: None,
-            });
-            Ok(())
-        };
         for field in text.split('\0') {
             if let Some(path) = field.strip_prefix("worktree ") {
-                if let Some((path, branch)) = current.take() {
-                    append(path, branch)?;
+                if let Some(entry) = current.take() {
+                    raw_worktrees.push(entry);
                 }
                 current = Some((path.to_string(), "detached".into()));
             } else if let Some(branch) = field.strip_prefix("branch refs/heads/") {
@@ -165,9 +141,66 @@ impl GitManager {
                 current = None;
             }
         }
-        if let Some((path, branch)) = current {
-            append(path, branch)?;
+        if let Some(entry) = current {
+            raw_worktrees.push(entry);
         }
+
+        let statuses: Vec<(Option<usize>, Option<String>)> = if !check_status {
+            vec![(None, None); raw_worktrees.len()]
+        } else if raw_worktrees.len() <= 1 {
+            raw_worktrees
+                .iter()
+                .map(|(wt_path, _)| match Self::status(wt_path) {
+                    Ok(entries) => (Some(entries.len()), None),
+                    Err(error) => (None, Some(error)),
+                })
+                .collect()
+        } else {
+            // Check multiple worktrees in bounded parallel batches of up to 4 threads.
+            let mut out = Vec::with_capacity(raw_worktrees.len());
+            for chunk in raw_worktrees.chunks(4) {
+                std::thread::scope(|scope| {
+                    let handles: Vec<_> = chunk
+                        .iter()
+                        .map(|(wt_path, _)| {
+                            scope.spawn(move || match Self::status(wt_path) {
+                                Ok(entries) => (Some(entries.len()), None),
+                                Err(error) => (None, Some(error)),
+                            })
+                        })
+                        .collect();
+                    for handle in handles {
+                        out.push(
+                            handle
+                                .join()
+                                .unwrap_or((None, Some("Status worker panicked".into()))),
+                        );
+                    }
+                });
+            }
+            out
+        };
+
+        let worktrees = raw_worktrees
+            .into_iter()
+            .zip(statuses)
+            .enumerate()
+            .map(
+                |(index, ((wt_path, branch), (count, status_error)))| GitWorktree {
+                    id: Self::generate_worktree_id(&wt_path),
+                    name: Path::new(&wt_path)
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| "worktree".into()),
+                    path: wt_path.replace('\\', "/"),
+                    branch,
+                    is_main: index == 0,
+                    dirty_files_count: count,
+                    status_error,
+                    active_agent_name: None,
+                },
+            )
+            .collect();
         Ok(worktrees)
     }
     /// Branch checked out in `worktree_path`, read straight from that worktree's HEAD file.

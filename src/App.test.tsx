@@ -13,6 +13,7 @@ const ipc = vi.hoisted(() => ({
   onAppError: vi.fn(async () => () => {}),
   listWorktrees: vi.fn(async () => []),
   readWorktreeBranches: vi.fn(async () => [] as (string | null)[]),
+  detectIdes: vi.fn(async () => [] as string[]),
 }));
 vi.mock('./lib/tauriIpc', () => ({ tauriIpc: ipc }));
 vi.mock('./components/layout/TitleBar', () => ({ TitleBar: () => null }));

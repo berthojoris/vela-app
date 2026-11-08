@@ -109,6 +109,45 @@ export const DiffViewerModal: React.FC = () => {
     return parts[parts.length - 1] || worktreePath;
   }, [worktreePath]);
 
+  // Diff lines truncation limit — memoized so typing in commitMessage or searchQuery
+  // never re-splits large patches or re-reconciles up to 2,000 diff line DOM nodes.
+  const MAX_DIFF_LINES = 2000;
+  const { totalDiffLineCount, isDiffTruncated, renderedDiffLines } = useMemo(() => {
+    const raw = selectedFile?.diff_content;
+    if (!raw) {
+      return { totalDiffLineCount: 0, isDiffTruncated: false, renderedDiffLines: null };
+    }
+    const lines = raw.split('\n');
+    const truncated = lines.length > MAX_DIFF_LINES;
+    const visible = truncated ? lines.slice(0, MAX_DIFF_LINES) : lines;
+    const nodes =
+      visible.length > 0
+        ? visible.map((line, idx) => {
+            const isAdd = line.startsWith('+') && !line.startsWith('+++');
+            const isDel = line.startsWith('-') && !line.startsWith('---');
+            const isHeader = line.startsWith('@@') || line.startsWith('diff ') || line.startsWith('index ');
+
+            return (
+              <div
+                key={idx}
+                className={`whitespace-pre px-2 py-0.5 rounded-sm ${
+                  isAdd
+                    ? 'bg-orca-emerald/15 text-emerald-300'
+                    : isDel
+                      ? 'bg-orca-rose/15 text-rose-300'
+                      : isHeader
+                        ? 'text-orca-muted font-bold bg-orca-card/60'
+                        : 'text-orca-text'
+                }`}
+              >
+                {line}
+              </div>
+            );
+          })
+        : null;
+    return { totalDiffLineCount: lines.length, isDiffTruncated: truncated, renderedDiffLines: nodes };
+  }, [selectedFile?.diff_content]);
+
   if (!isOpen) return null;
 
   const handleCommitSubmit = async (e: React.FormEvent) => {
@@ -144,12 +183,6 @@ export const DiffViewerModal: React.FC = () => {
     if (s.includes('?')) return { text: 'UNT', color: 'text-purple-400 border-purple-400/30 bg-purple-400/10' };
     return { text: s || 'MOD', color: 'text-orca-muted border-orca-border bg-orca-card' };
   };
-
-  // Diff lines truncation limit
-  const MAX_DIFF_LINES = 2000;
-  const diffLines = selectedFile?.diff_content ? selectedFile.diff_content.split('\n') : [];
-  const isDiffTruncated = diffLines.length > MAX_DIFF_LINES;
-  const visibleDiffLines = isDiffTruncated ? diffLines.slice(0, MAX_DIFF_LINES) : diffLines;
 
   return (
     <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-[2px] flex items-center justify-center p-6 select-none text-xs">
@@ -509,36 +542,12 @@ export const DiffViewerModal: React.FC = () => {
                       )}
                       {isDiffTruncated && (
                         <div className="mb-2 p-2 bg-orca-amber/10 border border-orca-amber/30 rounded text-amber-300 text-[11px]">
-                          Note: This diff is large ({diffLines.length} lines). Displaying the first {MAX_DIFF_LINES}{' '}
+                          Note: This diff is large ({totalDiffLineCount} lines). Displaying the first {MAX_DIFF_LINES}{' '}
                           lines for optimal performance.
                         </div>
                       )}
 
-                      {visibleDiffLines.length > 0 ? (
-                        visibleDiffLines.map((line, idx) => {
-                          const isAdd = line.startsWith('+') && !line.startsWith('+++');
-                          const isDel = line.startsWith('-') && !line.startsWith('---');
-                          const isHeader =
-                            line.startsWith('@@') || line.startsWith('diff ') || line.startsWith('index ');
-
-                          return (
-                            <div
-                              key={idx}
-                              className={`whitespace-pre px-2 py-0.5 rounded-sm ${
-                                isAdd
-                                  ? 'bg-orca-emerald/15 text-emerald-300'
-                                  : isDel
-                                    ? 'bg-orca-rose/15 text-rose-300'
-                                    : isHeader
-                                      ? 'text-orca-muted font-bold bg-orca-card/60'
-                                      : 'text-orca-text'
-                              }`}
-                            >
-                              {line}
-                            </div>
-                          );
-                        })
-                      ) : (
+                      {renderedDiffLines ?? (
                         <div className="text-orca-muted italic p-6 text-center">
                           {selectedFile.diff_content || 'No diff content available for this file.'}
                         </div>

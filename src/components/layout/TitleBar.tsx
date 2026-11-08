@@ -131,22 +131,20 @@ export const TitleBar: React.FC = () => {
     }
   };
 
-  const { sessions, activeSessionId } = useTerminalStore(
-    useShallow((state) => ({ sessions: state.sessions, activeSessionId: state.activeSessionId }))
+  const { activeSessionCwd: sessionCwd, runningCount } = useTerminalStore(
+    useShallow((state) => ({
+      activeSessionCwd: state.sessions.find((s) => s.id === state.activeSessionId)?.cwd,
+      runningCount: state.sessions.reduce((count, s) => count + (s.exited ? 0 : 1), 0),
+    }))
   );
-  const { repoPath, worktrees, activeWorktreeId, activeSessionCwd } = useWorktreeStore(
+  const { repoPath, activeWorktreeBranch, activeSessionCwd } = useWorktreeStore(
     useShallow((state) => ({
       repoPath: state.repoPath,
-      worktrees: state.worktrees,
-      activeWorktreeId: state.activeWorktreeId,
+      activeWorktreeBranch: state.worktrees.find((w) => w.id === state.activeWorktreeId)?.branch,
       activeSessionCwd: state.activeSessionCwd,
     }))
   );
-  const activeSession = sessions.find((s) => s.id === activeSessionId);
-  const currentCwd = activeSession?.cwd || activeSessionCwd;
-  const runningCount = sessions.filter((s) => !s.exited).length;
-
-  const activeWorktree = worktrees.find((w) => w.id === activeWorktreeId);
+  const currentCwd = sessionCwd || activeSessionCwd;
 
   // Only enable the native drag regions once the window is known to be in the
   // restored state. Tauri's "false" value disables dragging for the element and
@@ -177,10 +175,10 @@ export const TitleBar: React.FC = () => {
             <FolderGit2 className="w-3.5 h-3.5 shrink-0 text-orca-accent" />
             <PathLabel path={repoPath} />
 
-            {activeWorktree && (
+            {activeWorktreeBranch && (
               <div className="flex items-center gap-1 shrink-0 bg-orca-card px-2 py-0.5 rounded border border-orca-border text-[11px] text-orca-emerald font-mono">
                 <GitBranch className="w-3 h-3" />
-                <span>{activeWorktree.branch}</span>
+                <span>{activeWorktreeBranch}</span>
               </div>
             )}
           </div>

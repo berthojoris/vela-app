@@ -1,5 +1,5 @@
 import { useShallow } from 'zustand/react/shallow';
-import React, { lazy, Suspense } from 'react';
+import React, { lazy, Suspense, useMemo } from 'react';
 import { useTerminalStore } from '../../stores/useTerminalStore';
 import { useWorktreeStore } from '../../stores/useWorktreeStore';
 import { ErrorBoundary } from '../common/ErrorBoundary';
@@ -31,6 +31,9 @@ export const TerminalGrid: React.FC<TerminalGridProps> = ({
     );
 
   const repoPath = useWorktreeStore((state) => state.repoPath);
+  // Keep DOM node order invariant across tab switches and tab drag-reorders;
+  // visual split placement uses CSS flex `order` so WebView2 never moves live xterm DOM subtrees.
+  const stableSessions = useMemo(() => [...sessions].sort((a, b) => a.id.localeCompare(b.id)), [sessions]);
 
   if (sessions.length === 0) {
     return (
@@ -82,13 +85,6 @@ export const TerminalGrid: React.FC<TerminalGridProps> = ({
   const isVerticalSplit = splitMode === 'vertical' && Boolean(hasDistinctSecondary);
   const isHorizontalSplit = splitMode === 'horizontal' && Boolean(hasDistinctSecondary);
   const showSecondary = isVerticalSplit || isHorizontalSplit;
-  const orderedSessions = [
-    activeSession,
-    ...(showSecondary && secondarySession ? [secondarySession] : []),
-    ...sessions.filter(
-      (session) => session.id !== activeSession.id && (!showSecondary || session.id !== secondarySession?.id)
-    ),
-  ];
 
   const containerClass = isVerticalSplit
     ? 'h-full w-full flex overflow-hidden'
@@ -98,7 +94,7 @@ export const TerminalGrid: React.FC<TerminalGridProps> = ({
 
   return (
     <div className={containerClass}>
-      {orderedSessions.map((session) => {
+      {stableSessions.map((session) => {
         const isPrimary = session.id === activeSession.id;
         const isActive = session.id === activeSessionId;
         const isSecondary = showSecondary && session.id === secondarySession?.id;
@@ -107,12 +103,12 @@ export const TerminalGrid: React.FC<TerminalGridProps> = ({
           ? 'hidden'
           : isVerticalSplit
             ? isPrimary
-              ? 'w-1/2 h-full border-r border-orca-border relative'
-              : 'w-1/2 h-full relative'
+              ? 'order-1 w-1/2 h-full border-r border-orca-border relative'
+              : 'order-2 w-1/2 h-full relative'
             : isHorizontalSplit
               ? isPrimary
-                ? 'h-1/2 w-full border-b border-orca-border relative'
-                : 'h-1/2 w-full relative'
+                ? 'order-1 h-1/2 w-full border-b border-orca-border relative'
+                : 'order-2 h-1/2 w-full relative'
               : 'w-full h-full relative';
 
         return (

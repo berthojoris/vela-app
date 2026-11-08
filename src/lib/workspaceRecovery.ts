@@ -171,7 +171,7 @@ export function flushWorkspaceRecovery(): Promise<void> {
 function scheduleSave() {
   clearTimeout(timer);
   timer = setTimeout(() => void flushWorkspaceRecovery(), 500);
-  maxTimer ??= setTimeout(() => void flushWorkspaceRecovery(), 2000);
+  maxTimer ??= setTimeout(() => void flushWorkspaceRecovery(), 5000);
 }
 
 export function initializeWorkspaceRecovery(): Promise<void> {
@@ -190,8 +190,28 @@ export function initializeWorkspaceRecovery(): Promise<void> {
       useNoticeStore.getState().report('Workspace recovery is unavailable', error);
     }
     enabled = true;
-    useTerminalStore.subscribe(scheduleSave);
-    useEditorStore.subscribe(scheduleSave);
+    useTerminalStore.subscribe((state, prev) => {
+      if (
+        state.sessions !== prev.sessions ||
+        state.activeSessionId !== prev.activeSessionId ||
+        state.primarySessionId !== prev.primarySessionId ||
+        state.secondarySessionId !== prev.secondarySessionId ||
+        state.splitMode !== prev.splitMode
+      ) {
+        scheduleSave();
+      }
+    });
+    useEditorStore.subscribe((state, prev) => {
+      if (
+        state.documents !== prev.documents ||
+        state.activeDocumentId !== prev.activeDocumentId ||
+        state.workspaceView !== prev.workspaceView ||
+        state.explorerRoot !== prev.explorerRoot ||
+        state.sidebarMode !== prev.sidebarMode
+      ) {
+        scheduleSave();
+      }
+    });
     subscribeEditorContent(scheduleSave);
     window.addEventListener('pagehide', () => void flushWorkspaceRecovery());
     document.addEventListener('visibilitychange', () => {

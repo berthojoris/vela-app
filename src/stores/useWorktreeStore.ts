@@ -52,9 +52,18 @@ let pendingRefresh: { repo: string; checkStatus: boolean; promise: Promise<void>
 const repoRootCache = new Map<string, string>();
 const worktreeListCache = new Map<string, GitWorktree[]>();
 
+function setLru<K, V>(map: Map<K, V>, key: K, value: V, maxEntries: number): void {
+  map.delete(key);
+  while (map.size >= maxEntries) {
+    const oldest = map.keys().next().value;
+    if (oldest === undefined) break;
+    map.delete(oldest);
+  }
+  map.set(key, value);
+}
+
 function cacheWorktreeList(repoPath: string, list: GitWorktree[]): void {
-  if (worktreeListCache.size > 32) worktreeListCache.clear();
-  worktreeListCache.set(normalizePath(repoPath), list);
+  setLru(worktreeListCache, normalizePath(repoPath), list, 16);
 }
 
 function loadAutoGitStatus(): boolean {
@@ -167,9 +176,8 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
     // never flashes the spinner, it just resolves quietly.
     if (previous.repoPath && previous.worktrees.length) {
       cacheWorktreeList(previous.repoPath, previous.worktrees);
-      if (repoRootCache.size > 64) repoRootCache.clear();
       for (const worktree of previous.worktrees) {
-        repoRootCache.set(normalizePath(worktree.path), previous.repoPath);
+        setLru(repoRootCache, normalizePath(worktree.path), previous.repoPath, 32);
       }
     }
     const knownRoot = repoRootCache.get(normCwd);
@@ -198,8 +206,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
       const root = knownRoot ?? (await tauriIpc.findGitRepo(cwd));
       if (request !== syncSequence) return;
       if (root) {
-        if (repoRootCache.size > 64) repoRootCache.clear();
-        repoRootCache.set(normCwd, root);
+        setLru(repoRootCache, normCwd, root, 32);
       }
       if (!root) {
         set({ repoPath: null, worktrees: [], activeWorktreeId: null, isLoading: false });

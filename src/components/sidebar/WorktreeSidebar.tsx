@@ -93,18 +93,20 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
     }))
   );
 
-  const { sessions, activeSessionId, setActiveSession, createSession } = useTerminalStore(
-    useShallow((state) => ({
-      sessions: state.sessions,
-      activeSessionId: state.activeSessionId,
-      setActiveSession: state.setActiveSession,
-      createSession: state.createSession,
-    }))
+  const { hasActiveSession, sessionCwd, setActiveSession, createSession } = useTerminalStore(
+    useShallow((state) => {
+      const active = state.sessions.find((s) => s.id === state.activeSessionId);
+      return {
+        hasActiveSession: Boolean(active),
+        sessionCwd: active?.cwd,
+        setActiveSession: state.setActiveSession,
+        createSession: state.createSession,
+      };
+    })
   );
   const { openDiffModal } = useDiffStore(useShallow((state) => ({ openDiffModal: state.openDiffModal })));
 
-  const activeSession = sessions.find((s) => s.id === activeSessionId);
-  const currentCwd = activeSession?.cwd || activeSessionCwd;
+  const currentCwd = sessionCwd || activeSessionCwd;
   const activeWorktree = repoPath ? worktrees.find((wt) => wt.id === activeWorktreeId) : undefined;
   const fileRoot = explorerRoot || currentCwd || repoPath;
 
@@ -147,7 +149,9 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
     selectWorktree(wt.id);
     const norm = (p: string) => p.trim().replace(/\\/g, '/').toLowerCase();
     const targetPath = norm(wt.path);
-    const existing = sessions.find((s) => !s.exited && (s.worktree_id === wt.id || norm(s.cwd) === targetPath));
+    const existing = useTerminalStore
+      .getState()
+      .sessions.find((s) => !s.exited && (s.worktree_id === wt.id || norm(s.cwd) === targetPath));
     if (existing) {
       setActiveSession(existing.id);
     }
@@ -586,7 +590,7 @@ export const WorktreeSidebar: React.FC<WorktreeSidebarProps> = ({ onOpenCreateMo
                     No worktrees found. Click below to add an isolated worktree for your agent.
                   </div>
                 )
-              ) : activeSession ? (
+              ) : hasActiveSession ? (
                 <div className="h-full flex flex-col items-center justify-center p-4 text-center select-none text-orca-muted">
                   <FolderGit2 className="w-8 h-8 text-orca-muted/30 mb-2" />
                   <span className="text-white text-xs font-semibold mb-1">Not a Git Repository</span>

@@ -29,6 +29,9 @@ export function FileExplorer({ root, enabled = true }: { root: string | null; en
   const dirtyIds = useEditorStore(useShallow((s) => s.documents.filter(isDirty).map((doc) => doc.id)));
   const activeId = useEditorStore((s) => s.activeDocumentId);
   const opening = useEditorStore((s) => s.opening);
+  const dirtySet = useMemo(() => new Set(dirtyIds), [dirtyIds]);
+  const openingSet = useMemo(() => new Set(opening), [opening]);
+  const scrollFrame = useRef(0);
 
   const load = async (path: string) => {
     if (!root || requests.current.has(path)) return;
@@ -58,6 +61,7 @@ export function FileExplorer({ root, enabled = true }: { root: string | null; en
     const pending = requests.current;
     return () => {
       mounted.current = false;
+      cancelAnimationFrame(scrollFrame.current);
       pending.clear();
     };
   }, []);
@@ -143,7 +147,7 @@ export function FileExplorer({ root, enabled = true }: { root: string | null; en
     const open = expanded.has(entry.path);
     const id = fileKey(root!, entry.path);
     const active = activeId === id;
-    const dirty = dirtyIds.includes(id);
+    const dirty = dirtySet.has(id);
     return (
       <li key={entry.path} role="none" className="h-7">
         <button
@@ -215,7 +219,7 @@ export function FileExplorer({ root, enabled = true }: { root: string | null; en
             <FileIcon name={entry.name} />
           )}
           <span className="truncate">{entry.name}</span>
-          {opening.includes(id) && <Loader2 className="ml-auto w-3 h-3 shrink-0 animate-spin" />}
+          {openingSet.has(id) && <Loader2 className="ml-auto w-3 h-3 shrink-0 animate-spin" />}
           {dirty && (
             <span aria-label="Unsaved changes" className="ml-auto w-1.5 h-1.5 rounded-full bg-orca-text shrink-0" />
           )}
@@ -265,7 +269,11 @@ export function FileExplorer({ root, enabled = true }: { root: string | null; en
           </button>
           <div
             ref={scroller}
-            onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+            onScroll={(event) => {
+              const nextTop = event.currentTarget.scrollTop;
+              cancelAnimationFrame(scrollFrame.current);
+              scrollFrame.current = requestAnimationFrame(() => setScrollTop(nextTop));
+            }}
             className="flex-1 min-h-0 overflow-auto py-1"
           >
             <ul role="tree" aria-label="Files and folders">

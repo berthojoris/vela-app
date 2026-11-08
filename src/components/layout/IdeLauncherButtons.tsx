@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { useShallow } from 'zustand/react/shallow';
 import { tauriIpc } from '../../lib/tauriIpc';
 import { useWorktreeStore } from '../../stores/useWorktreeStore';
 import { useTerminalStore } from '../../stores/useTerminalStore';
@@ -8,19 +7,16 @@ import { AntigravityIcon, CursorIcon } from '../terminal/TerminalIcon';
 
 /** Quick IDE launchers for active terminal's directory; only installed IDEs are shown. */
 export const IdeLauncherButtons: React.FC<{ className?: string }> = ({ className }) => {
-  const { sessions, activeSessionId } = useTerminalStore(
-    useShallow((state) => ({ sessions: state.sessions, activeSessionId: state.activeSessionId }))
-  );
+  const sessionCwd = useTerminalStore((state) => state.sessions.find((s) => s.id === state.activeSessionId)?.cwd);
   const activeSessionCwd = useWorktreeStore((state) => state.activeSessionCwd);
-  const currentCwd = sessions.find((s) => s.id === activeSessionId)?.cwd || activeSessionCwd;
+  const currentCwd = sessionCwd || activeSessionCwd;
 
   const [available, setAvailable] = useState<ReadonlySet<string>>(new Set());
   const [openingIde, setOpeningIde] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    tauriIpc
-      .detectIdes()
+    Promise.resolve(tauriIpc.detectIdes?.() ?? [])
       .then((ides) => {
         if (!cancelled) setAvailable(new Set(ides));
       })

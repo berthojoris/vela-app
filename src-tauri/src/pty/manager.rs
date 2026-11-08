@@ -81,7 +81,7 @@ struct InputChunk {
 }
 
 struct ActiveSession {
-    input: mpsc::SyncSender<InputChunk>,
+    input: mpsc::SyncSender<Option<InputChunk>>,
     master: Mutex<Option<Box<dyn MasterPty + Send>>>,
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
     pid: Option<u32>,
@@ -198,7 +198,7 @@ impl PtyManager {
         drop(pair.slave);
         let pid = child.process_id();
         let flow = Arc::new(OutputFlow::default());
-        let (input, receiver) = mpsc::sync_channel::<InputChunk>(32);
+        let (input, receiver) = mpsc::sync_channel::<Option<InputChunk>>(32);
         let session = Arc::new(ActiveSession {
             input,
             master: Mutex::new(Some(pair.master)),
@@ -218,8 +218,8 @@ impl PtyManager {
             .name(format!("pty-input-{id}"))
             .spawn(move || {
                 while !input_flow.stopped() {
-                    match receiver.recv_timeout(Duration::from_millis(250)) {
-                        Ok(chunk) => {
+                    match receiver.recv_timeout(Duration::from_secs(2)) {
+                        Ok(Some(chunk)) => {
                             let result = writer
                                 .write_all(&chunk.data)
                                 .and_then(|_| writer.flush())
@@ -236,8 +236,8 @@ impl PtyManager {
                                 break;
                             }
                         }
+                        Ok(None) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
                         Err(mpsc::RecvTimeoutError::Timeout) => (),
-                        Err(mpsc::RecvTimeoutError::Disconnected) => break,
                     }
                 }
             });
@@ -274,7 +274,7 @@ impl PtyManager {
             .name(format!("pty-output-{id}"))
             .spawn(move || {
                 let event = format!("pty-output-{reader_id}");
-                let mut buffer = [0; 8192];
+                let mut buffer = vec![0u8; 16384];
                 let mut failure = None;
                 // Gate even EOF until the UI has installed its exit listener.
                 if let Err(error) = flow.reserve(0) {
@@ -314,6 +314,7 @@ impl PtyManager {
                     let _ = std::io::copy(&mut reader, &mut std::io::sink());
                 }
                 flow.stop();
+                let _ = reader_session.input.try_send(None);
                 let code = exit_rx.recv_timeout(Duration::from_secs(5)).ok().flatten();
                 if let Some(error) = failure {
                     let _ = app.emit(&format!("pty-error-{reader_id}"), error);
@@ -370,10 +371,10 @@ impl PtyManager {
         let (completed, receiver) = mpsc::sync_channel(1);
         session
             .input
-            .try_send(InputChunk {
+            .try_send(Some(InputChunk {
                 data: data.to_vec(),
                 completed,
-            })
+            }))
             .map_err(|error| -> String {
                 match error {
                     mpsc::TrySendError::Full(_) => {
@@ -421,6 +422,7 @@ impl PtyManager {
         // Never mark the tab closed if termination actually failed.
         terminate_tree(&session)?;
         session.flow.stop();
+        let _ = session.input.try_send(None);
         let mut sessions = self
             .sessions
             .lock()
