@@ -135,6 +135,11 @@ export const tauriIpc = {
     await invoke('open_in_ide', { path, ide });
   },
 
+  async detectIdes(): Promise<string[]> {
+    if (!isTauri()) return [];
+    return await invoke<string[]>('detect_ides');
+  },
+
   async listWorktrees(repoPath: string, checkStatus?: boolean): Promise<GitWorktree[]> {
     if (!isTauri()) return [];
     return await invoke<GitWorktree[]>('list_worktrees', { repoPath, checkStatus });

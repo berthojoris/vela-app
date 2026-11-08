@@ -466,26 +466,10 @@ async fn open_in_ide(path: String, ide: String) -> Result<(), String> {
 
         #[cfg(windows)]
         {
-            let local = std::env::var("LOCALAPPDATA").unwrap_or_default();
-            let program_files =
-                std::env::var("ProgramFiles").unwrap_or_else(|_| "C:\\Program Files".into());
-            let candidates: Vec<String> = match ide.as_str() {
-                "antigravity" => vec![
-                    format!(r"{local}\Programs\Antigravity IDE\Antigravity IDE.exe"),
-                    format!(r"{local}\Programs\antigravity\Antigravity.exe"),
-                ],
-                "cursor" => vec![
-                    format!(r"{program_files}\cursor\Cursor.exe"),
-                    format!(r"{local}\Programs\cursor\Cursor.exe"),
-                ],
-                other => return Err(format!("Unknown IDE: {other}")),
-            };
             // ponytail: known install locations only; add PATH/PATHEXT scan
             // (AgentSupervisor::check_binary_exists) if a custom install shows up.
-            let exe = candidates
-                .into_iter()
-                .find(|candidate| std::path::Path::new(candidate).is_file())
-                .ok_or_else(|| format!("{} is not installed at a known location.", ide))?;
+            let exe = find_ide_exe(&ide)
+                .ok_or_else(|| format!("{ide} is not installed at a known location."))?;
             crate::process::hidden_command(&exe)
                 .arg(&win_path)
                 .spawn()
@@ -500,6 +484,45 @@ async fn open_in_ide(path: String, ide: String) -> Result<(), String> {
     })
     .await
     .map_err(|error| format!("IDE launcher worker failed: {error}"))?
+}
+
+/// Returns the first existing executable path for a known IDE (Windows only).
+#[cfg(windows)]
+fn find_ide_exe(ide: &str) -> Option<String> {
+    let local = std::env::var("LOCALAPPDATA").unwrap_or_default();
+    let program_files =
+        std::env::var("ProgramFiles").unwrap_or_else(|_| "C:\\Program Files".into());
+    let candidates: Vec<String> = match ide {
+        "antigravity" => vec![
+            format!(r"{local}\Programs\Antigravity IDE\Antigravity IDE.exe"),
+            format!(r"{local}\Programs\antigravity\Antigravity.exe"),
+        ],
+        "cursor" => vec![
+            format!(r"{program_files}\cursor\Cursor.exe"),
+            format!(r"{local}\Programs\cursor\Cursor.exe"),
+        ],
+        _ => return None,
+    };
+    candidates
+        .into_iter()
+        .find(|candidate| std::path::Path::new(candidate).is_file())
+}
+
+/// IDEs installed on this machine; drives launcher button visibility.
+#[tauri::command]
+fn detect_ides() -> Vec<String> {
+    #[cfg(windows)]
+    {
+        ["antigravity", "cursor"]
+            .into_iter()
+            .filter(|ide| find_ide_exe(ide).is_some())
+            .map(str::to_string)
+            .collect()
+    }
+    #[cfg(not(windows))]
+    {
+        Vec::new()
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -585,6 +608,7 @@ pub fn run() {
             select_directory,
             open_directory_in_explorer,
             open_in_ide,
+            detect_ides,
         ])
         .build(tauri::generate_context!())
         .map(|app| {
