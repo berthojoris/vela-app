@@ -248,6 +248,116 @@ fn real_git_branch_switch_lifecycle() {
 }
 
 #[test]
+fn real_git_switch_in_linked_worktree_never_leaves_head_detached() {
+    // All writes/removals are restricted to this test's unique temporary directory.
+    struct Scratch(std::path::PathBuf);
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    let root = std::env::var_os("LOCALAPPDATA")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("Temp/opencode")
+        .join(format!("vela-linked-switch-test-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(root.join("repo")).unwrap();
+    let scratch = Scratch(root);
+    let path = scratch.0.join("repo").to_string_lossy().replace('\\', "/");
+    let run_at = |at: &str, args: &[&str]| {
+        GitManager::checked(
+            GitManager::run(
+                GitManager::git_cmd().arg("-C").arg(at).args(args),
+                256 * 1024,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+    };
+    run_at(&path, &["init", "-b", "main"]);
+    run_at(&path, &["config", "user.name", "Vela Test"]);
+    run_at(
+        &path,
+        &["config", "user.email", "vela-test@example.invalid"],
+    );
+    run_at(&path, &["config", "commit.gpgsign", "false"]);
+    run_at(&path, &["config", "core.autocrlf", "false"]);
+    let hooks = scratch.0.join("hooks");
+    std::fs::create_dir(&hooks).unwrap();
+    run_at(
+        &path,
+        &["config", "core.hooksPath", &hooks.to_string_lossy()],
+    );
+    std::fs::write(scratch.0.join("repo/tracked.txt"), "original\n").unwrap();
+    GitManager::commit_worktree(&path, "initial").unwrap();
+    run_at(&path, &["branch", "feat/next"]);
+
+    let linked = GitManager::create_worktree(&path, "feat/linked", None).unwrap();
+    assert_eq!(
+        GitManager::read_head_branch(&linked.path).as_deref(),
+        Some("feat/linked")
+    );
+
+    // A sidebar switch on a linked worktree leaves HEAD attached to the chosen branch.
+    GitManager::switch_branch(&linked.path, "feat/next", false).unwrap();
+    assert_eq!(
+        GitManager::read_head_branch(&linked.path).as_deref(),
+        Some("feat/next")
+    );
+    let attached = run_at(&linked.path, &["symbolic-ref", "--short", "HEAD"]);
+    assert_eq!(
+        String::from_utf8_lossy(&attached.stdout).trim(),
+        "feat/next"
+    );
+
+    // Advance the branch so its tip differs from the commit a detached HEAD would sit on.
+    std::fs::write(
+        std::path::Path::new(&linked.path).join("advance.txt"),
+        "next\n",
+    )
+    .unwrap();
+    GitManager::commit_worktree(&linked.path, "advance feat/next").unwrap();
+    run_at(&linked.path, &["switch", "--detach", "HEAD~1"]);
+    assert_eq!(
+        GitManager::read_head_branch(&linked.path).as_deref(),
+        Some("detached")
+    );
+
+    // A detached HEAD on another commit is never silently rewritten into the branch.
+    assert!(GitManager::ensure_attached(&linked.path, "feat/next").is_err());
+    assert_eq!(
+        GitManager::read_head_branch(&linked.path).as_deref(),
+        Some("detached")
+    );
+
+    // A detached HEAD already sitting on the branch tip is re-attached to the branch ref,
+    // so the worktree can never keep showing "detached" after switching to that branch.
+    run_at(
+        &linked.path,
+        &["switch", "--detach", "refs/heads/feat/next"],
+    );
+    assert_eq!(
+        GitManager::read_head_branch(&linked.path).as_deref(),
+        Some("detached")
+    );
+    GitManager::ensure_attached(&linked.path, "feat/next").unwrap();
+    assert_eq!(
+        GitManager::read_head_branch(&linked.path).as_deref(),
+        Some("feat/next")
+    );
+    let attached = run_at(&linked.path, &["symbolic-ref", "--short", "HEAD"]);
+    assert_eq!(
+        String::from_utf8_lossy(&attached.stdout).trim(),
+        "feat/next"
+    );
+    // Re-attaching moved no files: the commit and working tree are untouched.
+    let head = run_at(&linked.path, &["rev-parse", "HEAD"]);
+    let tip = run_at(&linked.path, &["rev-parse", "refs/heads/feat/next"]);
+    assert_eq!(head.stdout, tip.stdout);
+}
+
+#[test]
 fn real_git_worktree_diff_commit_remove_lifecycle() {
     // All writes/removals are restricted to this test's unique temporary directory.
     struct Scratch(std::path::PathBuf);

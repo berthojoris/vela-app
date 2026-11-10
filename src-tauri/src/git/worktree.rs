@@ -395,6 +395,9 @@ impl GitManager {
             }
             return Err(error);
         }
+        // A successful switch must leave this worktree attached: a detached HEAD here would
+        // show up in the sidebar as a "detached" worktree under the branch just left behind.
+        Self::ensure_attached(&path, branch)?;
         if stashed {
             if let Err(error) = Self::run(
                 Self::git_cmd()
@@ -547,6 +550,50 @@ impl GitManager {
         Self::checked(output(&mut command, Duration::from_secs(120), 256 * 1024)?)?;
         Ok(())
     }
+    /// Resolved object ID for `rev`, or `None` when Git cannot resolve it.
+    fn rev_parse(path: &str, rev: &str) -> Option<String> {
+        Self::run(
+            Self::git_cmd().args(["-C", path, "rev-parse", "--verify", "--end-of-options", rev]),
+            64 * 1024,
+        )
+        .ok()
+        .filter(|result| result.status.success())
+        .map(|result| String::from_utf8_lossy(&result.stdout).trim().to_string())
+        .filter(|oid| !oid.is_empty())
+    }
+
+    /// Guarantees `worktree_path` ends a switch attached to `branch`.
+    ///
+    /// `git switch <branch>` normally writes `ref: refs/heads/<branch>` to HEAD, but a
+    /// worktree whose HEAD was left detached (an agent ran `checkout <sha>`, a `bisect`, or a
+    /// previous switch was interrupted) must never keep reporting a detached HEAD after the
+    /// user switched it from the sidebar: the panel would then show that worktree as
+    /// "detached" under the branch it just switched away from. When HEAD already points at the
+    /// branch tip, re-point the ref with `symbolic-ref` — that moves no files, so the index and
+    /// working tree stay exactly as they are. A HEAD at a different commit is never rewritten;
+    /// the caller gets an explicit error instead.
+    fn ensure_attached(worktree_path: &str, branch: &str) -> Result<(), String> {
+        if Self::read_head_branch(worktree_path).as_deref() == Some(branch) {
+            return Ok(());
+        }
+        let reference = format!("refs/heads/{branch}");
+        let head = Self::rev_parse(worktree_path, "HEAD");
+        let tip = Self::rev_parse(worktree_path, &reference);
+        if head.is_some() && head == tip {
+            Self::checked(Self::run(
+                Self::git_cmd().args(["-C", worktree_path, "symbolic-ref", "HEAD", &reference]),
+                64 * 1024,
+            )?)?;
+            if Self::read_head_branch(worktree_path).as_deref() == Some(branch) {
+                return Ok(());
+            }
+        }
+        Err(format!(
+            "Switched to {branch}, but this worktree's HEAD is still detached.\n\
+             Run `git switch {branch}` inside that worktree to re-attach it, then refresh."
+        ))
+    }
+
     pub(super) fn status(path: &str) -> Result<Vec<StatusEntry>, String> {
         let result = Self::checked(Self::run(
             Self::git_cmd().env("GIT_OPTIONAL_LOCKS", "0").args([
