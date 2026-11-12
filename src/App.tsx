@@ -145,7 +145,7 @@ export const App: React.FC = () => {
         <WorktreeSidebar onOpenCreateModal={() => setIsCreateWorktreeOpen(true)} />
 
         {/* Right: Terminal Multiplexer Area */}
-        <div className="flex-1 flex flex-col overflow-hidden bg-orca-darkest">
+        <div className="flex-1 flex flex-col overflow-hidden bg-orca-darkest relative">
           <div
             className="h-8 shrink-0 flex items-center gap-1 px-2 border-b border-orca-border bg-orca-darker text-[11px]"
             role="group"
@@ -173,7 +173,15 @@ export const App: React.FC = () => {
             <IdeLauncherButtons className="ml-auto mr-1" />
           </div>
           <EditorWorkspace />
-          <div className={workspaceView === 'terminal' ? 'flex flex-col flex-1 min-h-0' : 'hidden'}>
+          <div
+            aria-hidden={workspaceView !== 'terminal' || undefined}
+            inert={workspaceView !== 'terminal' || undefined}
+            className={
+              workspaceView === 'terminal'
+                ? 'flex flex-col flex-1 min-h-0'
+                : 'invisible pointer-events-none absolute inset-x-0 top-8 bottom-0 flex flex-col overflow-hidden'
+            }
+          >
             {/* Tab Navigation Bar with "+" Button & Split Toggles */}
             <TabBar onOpenTerminalModal={() => handleOpenTerminalModal()} />
 

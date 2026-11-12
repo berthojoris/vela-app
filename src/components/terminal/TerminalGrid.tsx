@@ -87,10 +87,10 @@ export const TerminalGrid: React.FC<TerminalGridProps> = ({
   const showSecondary = isVerticalSplit || isHorizontalSplit;
 
   const containerClass = isVerticalSplit
-    ? 'h-full w-full flex overflow-hidden'
+    ? 'relative h-full w-full flex overflow-hidden'
     : isHorizontalSplit
-      ? 'h-full w-full flex flex-col overflow-hidden'
-      : 'flex-1 h-full w-full overflow-hidden';
+      ? 'relative h-full w-full flex flex-col overflow-hidden'
+      : 'relative flex-1 h-full w-full overflow-hidden';
 
   return (
     <div className={containerClass}>
@@ -100,7 +100,7 @@ export const TerminalGrid: React.FC<TerminalGridProps> = ({
         const isSecondary = showSecondary && session.id === secondarySession?.id;
         const isVisible = isPrimary || isSecondary;
         const paneClass = !isVisible
-          ? 'hidden'
+          ? 'invisible pointer-events-none absolute inset-0 overflow-hidden'
           : isVerticalSplit
             ? isPrimary
               ? 'order-1 w-1/2 h-full border-r border-orca-border relative'
@@ -114,6 +114,8 @@ export const TerminalGrid: React.FC<TerminalGridProps> = ({
         return (
           <div
             key={session.id}
+            aria-hidden={!isVisible || undefined}
+            inert={!isVisible || undefined}
             className={paneClass}
             onClick={isVisible ? () => setActiveSession(session.id) : undefined}
             onFocusCapture={isVisible ? () => setActiveSession(session.id) : undefined}

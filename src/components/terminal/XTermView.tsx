@@ -1,8 +1,9 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { SearchAddon } from '@xterm/addon-search';
+import { WebglAddon } from '@xterm/addon-webgl';
 import '@xterm/xterm/css/xterm.css';
 import { tauriIpc } from '../../lib/tauriIpc';
 import { useTerminalStore } from '../../stores/useTerminalStore';
@@ -16,6 +17,44 @@ import {
   setTerminalFontSize,
 } from '../../lib/terminalFontSize';
 
+// Keep recently visited terminals warm on WebGL so tab switches do not tear down and
+// rebuild GPU contexts/canvases on every click, while staying well under WebView2's
+// active WebGL context ceiling (~16 contexts) when many tabs are open.
+const MAX_WEBGL_CONTEXTS = 6;
+
+interface WebglPoolEntry {
+  isVisible: () => boolean;
+  release: () => void;
+}
+
+type InternalXtermCore = {
+  _renderService?: {
+    handleResize?: (cols: number, rows: number) => void;
+  };
+  _viewport?: {
+    queueSync?: () => void;
+  };
+};
+
+const webglPool = new Map<symbol, WebglPoolEntry>();
+
+function pruneHiddenWebglContexts(protectedKey?: symbol) {
+  if (webglPool.size <= MAX_WEBGL_CONTEXTS) return;
+  for (const [candidateKey, candidate] of webglPool) {
+    if (candidateKey !== protectedKey && !candidate.isVisible()) {
+      webglPool.delete(candidateKey);
+      candidate.release();
+      if (webglPool.size <= MAX_WEBGL_CONTEXTS) break;
+    }
+  }
+}
+
+function touchWebglPool(key: symbol, entry: WebglPoolEntry) {
+  webglPool.delete(key);
+  webglPool.set(key, entry);
+  pruneHiddenWebglContexts(key);
+}
+
 interface XTermViewProps {
   sessionId: string;
   isActive: boolean;
@@ -28,6 +67,12 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive, isVis
   const fitAddonRef = useRef<FitAddon | null>(null);
   const searchAddonRef = useRef<SearchAddon | null>(null);
   const webglCleanupRef = useRef<(() => void) | null>(null);
+  const fitRef = useRef<((forceSurfaceSync?: boolean) => void) | null>(null);
+  const ensureWebglRef = useRef<(() => void) | null>(null);
+  const isVisibleRef = useRef(isVisible);
+  isVisibleRef.current = isVisible;
+  const isActiveRef = useRef(isActive);
+  isActiveRef.current = isActive;
   const searchOpenRef = useRef(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [streamError, setStreamError] = useState<string | null>(null);
@@ -112,24 +157,106 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive, isVis
     termRef.current = term;
     fitAddonRef.current = fitAddon;
 
-    const fit = () => {
-      if (disposed || exited || !containerRef.current?.clientWidth || !containerRef.current.clientHeight) return;
+    const poolKey = Symbol(sessionId);
+    let webglUnsupported = false;
+
+    const syncSurface = () => {
+      const core = (term as unknown as { _core?: InternalXtermCore })._core;
+      core?._renderService?.handleResize?.(term.cols, term.rows);
+      core?._viewport?.queueSync?.();
+      term.refresh?.(0, Math.max(0, term.rows - 1));
+    };
+
+    const fit = (forceSurfaceSync = false) => {
+      if (
+        disposed ||
+        !isVisibleRef.current ||
+        !containerRef.current?.clientWidth ||
+        !containerRef.current.clientHeight
+      ) {
+        return;
+      }
       try {
+        const firstMeasure = lastSize === '';
+        const prevCols = term.cols;
+        const prevRows = term.rows;
         fitAddon.fit();
+        const resized = term.cols !== prevCols || term.rows !== prevRows;
         const size = `${term.cols}:${term.rows}`;
-        if (size === lastSize) return;
-        lastSize = size;
-        void tauriIpc.resizeTerminal(sessionId, term.cols, term.rows).catch(report);
+        if (!exited && size !== lastSize) {
+          lastSize = size;
+          void tauriIpc.resizeTerminal(sessionId, term.cols, term.rows).catch(report);
+        }
+        if (forceSurfaceSync === true || firstMeasure) {
+          if (!resized) {
+            syncSurface();
+          } else {
+            const core = (term as unknown as { _core?: InternalXtermCore })._core;
+            core?._viewport?.queueSync?.();
+            term.refresh?.(0, Math.max(0, term.rows - 1));
+          }
+        }
       } catch (error) {
         report(error);
       }
     };
-    const fitTimer = setTimeout(fit, 50);
+
+    const ensureWebgl = () => {
+      if (disposed || webglUnsupported || !isVisibleRef.current) return;
+      if (webglCleanupRef.current) {
+        touchWebglPool(poolKey, {
+          isVisible: () => isVisibleRef.current,
+          release: () => webglCleanupRef.current?.(),
+        });
+        return;
+      }
+      let addon: WebglAddon | undefined;
+      try {
+        addon = new WebglAddon();
+        let addonDisposed = false;
+        const contextLoss = addon.onContextLoss(() => {
+          cleanup();
+          if (!disposed && isVisibleRef.current) {
+            fit(true);
+          }
+        }) as { dispose?: () => void } | undefined;
+        function cleanup() {
+          if (addonDisposed) return;
+          addonDisposed = true;
+          webglPool.delete(poolKey);
+          if (webglCleanupRef.current === cleanup) webglCleanupRef.current = null;
+          contextLoss?.dispose?.();
+          addon?.dispose?.();
+        }
+        term.loadAddon(addon);
+        webglCleanupRef.current = cleanup;
+        touchWebglPool(poolKey, {
+          isVisible: () => isVisibleRef.current,
+          release: cleanup,
+        });
+      } catch (error) {
+        webglUnsupported = true;
+        addon?.dispose?.();
+        console.warn('Using the standard terminal renderer', error);
+      }
+    };
+
+    fitRef.current = fit;
+    ensureWebglRef.current = ensureWebgl;
+
+    if (isVisibleRef.current) {
+      ensureWebgl();
+      fit(true);
+      if (isActiveRef.current) {
+        term.focus();
+      }
+    }
+    const fitTimer = setTimeout(() => fit(false), 50);
 
     // Font size is shared by every pane, so store it once and let each live terminal follow.
     const offFontSize = onTerminalFontSizeChange((size) => {
       if (term.options) term.options.fontSize = size;
-      fit();
+      fit(true);
     });
 
     const cwdHandler = term.parser.registerOscHandler(7, (data) => {
@@ -359,7 +486,7 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive, isVis
     // Window / Container resize observer
     const resizeObserver = new ResizeObserver(() => {
       cancelAnimationFrame(resizeFrame);
-      resizeFrame = requestAnimationFrame(fit);
+      resizeFrame = requestAnimationFrame(() => fit(false));
     });
     resizeObserver.observe(containerRef.current);
 
@@ -368,6 +495,9 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive, isVis
       clearTimeout(fitTimer);
       cancelAnimationFrame(resizeFrame);
       queuedInput = '';
+      fitRef.current = null;
+      ensureWebglRef.current = null;
+      webglPool.delete(poolKey);
       cwdHandler.dispose();
       onDataDisposable.dispose();
       container.removeEventListener('paste', handlePaste, true);
@@ -383,61 +513,43 @@ export const XTermView: React.FC<XTermViewProps> = ({ sessionId, isActive, isVis
     };
   }, [sessionId]);
 
-  // Attach the optional WebGL renderer only while the pane is visible so hidden tabs
-  // do not exhaust WebView2's active WebGL context limit or hold idle GPU textures.
-  useEffect(() => {
-    const term = termRef.current;
-    if (!isVisible || !term) {
-      webglCleanupRef.current?.();
-      webglCleanupRef.current = null;
+  // Synchronize WebGL pool membership, cell/canvas surface metrics, and ConPTY size
+  // before the browser paints when a tab or split pane becomes visible.
+  useLayoutEffect(() => {
+    isVisibleRef.current = isVisible;
+    if (!isVisible) {
+      pruneHiddenWebglContexts();
       return;
     }
-    let cancelled = false;
-    void import('@xterm/addon-webgl')
-      .then(({ WebglAddon }) => {
-        if (cancelled || termRef.current !== term || webglCleanupRef.current) return;
-        try {
-          const addon = new WebglAddon();
-          let disposed = false;
-          const contextLoss = addon.onContextLoss(() => cleanup()) as { dispose?: () => void } | undefined;
-          function cleanup() {
-            if (disposed) return;
-            disposed = true;
-            if (webglCleanupRef.current === cleanup) webglCleanupRef.current = null;
-            contextLoss?.dispose?.();
-            addon.dispose?.();
-          }
-          term.loadAddon(addon);
-          webglCleanupRef.current = cleanup;
-        } catch (error) {
-          console.warn('Using the standard terminal renderer', error);
-        }
-      })
-      .catch((error) => console.warn('WebGL is unavailable; using the standard terminal renderer', error));
-    return () => {
-      cancelled = true;
-      webglCleanupRef.current?.();
-      webglCleanupRef.current = null;
-    };
+    ensureWebglRef.current?.();
+    fitRef.current?.(true);
+    if (isActiveRef.current) {
+      termRef.current?.focus();
+    }
+    const frame = requestAnimationFrame(() => {
+      if (!isVisibleRef.current) return;
+      fitRef.current?.(true);
+      if (isActiveRef.current) {
+        termRef.current?.focus();
+      }
+    });
+    return () => cancelAnimationFrame(frame);
   }, [isVisible, sessionId]);
 
-  // Focus terminal when active
+  // Focus terminal and re-sync PTY/surface dimensions when active pane changes
   useEffect(() => {
+    isActiveRef.current = isActive;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    if (isActive && termRef.current) {
+    if (isActive && isVisible && termRef.current) {
       termRef.current.focus();
-      if (fitAddonRef.current) {
-        timer = setTimeout(() => {
-          try {
-            fitAddonRef.current?.fit();
-          } catch (error) {
-            setStreamError(errorMessage(error));
-          }
-        }, 20);
-      }
+      timer = setTimeout(() => {
+        if (isActiveRef.current && isVisibleRef.current) {
+          fitRef.current?.(true);
+        }
+      }, 20);
     }
     return () => clearTimeout(timer);
-  }, [isActive]);
+  }, [isActive, isVisible]);
 
   useEffect(() => {
     if (!searchOpen) return;

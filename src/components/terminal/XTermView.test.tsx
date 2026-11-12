@@ -10,6 +10,19 @@ const state = vi.hoisted(() => ({
   osc: null as null | ((data: string) => boolean),
   keyHandler: null as null | ((e: KeyboardEvent) => boolean),
   callbacks: [] as (() => void)[],
+  nextFitSize: null as null | { cols: number; rows: number },
+  terminals: [] as Array<{
+    cols: number;
+    rows: number;
+    refresh: ReturnType<typeof vi.fn>;
+    focus: ReturnType<typeof vi.fn>;
+    handleResize: ReturnType<typeof vi.fn>;
+    queueSync: ReturnType<typeof vi.fn>;
+  }>,
+  webglAddons: [] as Array<{
+    dispose: ReturnType<typeof vi.fn>;
+    triggerContextLoss: () => void;
+  }>,
 }));
 const ipc = vi.hoisted(() => ({
   onPtyOutput: vi.fn(),
@@ -27,15 +40,27 @@ vi.mock('@xterm/xterm', () => ({
   Terminal: class {
     cols = 80;
     rows = 24;
+    refresh = vi.fn();
+    focus = vi.fn();
+    handleResize = vi.fn();
+    queueSync = vi.fn();
+    _core = {
+      _renderService: { handleResize: this.handleResize },
+      _viewport: { queueSync: this.queueSync },
+    };
     parser = {
       registerOscHandler: (_: number, callback: (data: string) => boolean) => {
         state.osc = callback;
         return { dispose() {} };
       },
     };
-    loadAddon() {}
+    constructor() {
+      state.terminals.push(this);
+    }
+    loadAddon(addon: { activate?: (term: unknown) => void }) {
+      addon?.activate?.(this);
+    }
     open() {}
-    focus() {}
     dispose() {}
     writeln() {}
     attachCustomKeyEventHandler(handler: (e: KeyboardEvent) => boolean) {
@@ -52,7 +77,16 @@ vi.mock('@xterm/xterm', () => ({
 }));
 vi.mock('@xterm/addon-fit', () => ({
   FitAddon: class {
-    fit() {}
+    private term: { cols: number; rows: number } | null = null;
+    activate(term: { cols: number; rows: number }) {
+      this.term = term;
+    }
+    fit() {
+      if (this.term && state.nextFitSize) {
+        this.term.cols = state.nextFitSize.cols;
+        this.term.rows = state.nextFitSize.rows;
+      }
+    }
   },
 }));
 vi.mock('@xterm/addon-web-links', () => ({ WebLinksAddon: class {} }));
@@ -64,7 +98,18 @@ vi.mock('@xterm/addon-search', () => ({
 }));
 vi.mock('@xterm/addon-webgl', () => ({
   WebglAddon: class {
-    onContextLoss() {}
+    dispose = vi.fn();
+    private onLoss: (() => void) | null = null;
+    constructor() {
+      state.webglAddons.push({
+        dispose: this.dispose,
+        triggerContextLoss: () => this.onLoss?.(),
+      });
+    }
+    onContextLoss(callback: () => void) {
+      this.onLoss = callback;
+      return { dispose: vi.fn() };
+    }
   },
 }));
 import { useTerminalStore } from '../../stores/useTerminalStore';
@@ -74,6 +119,9 @@ beforeEach(() => {
   useTerminalStore.setState(useTerminalStore.getInitialState());
   useTerminalStore.setState({ sessions: [session('test')] });
   state.callbacks = [];
+  state.nextFitSize = null;
+  state.terminals = [];
+  state.webglAddons = [];
   Object.values(ipc).forEach((mock) => mock.mockReset());
   ipc.onPtyOutput.mockImplementation(async (_, callback) => {
     state.output = callback;
@@ -242,4 +290,113 @@ it('unlistens PTY events immediately when the process exits before the tab is cl
   expect(unlistenOutput).toHaveBeenCalledTimes(1);
   expect(unlistenExit).toHaveBeenCalledTimes(1);
   expect(unlistenError).toHaveBeenCalledTimes(1);
+});
+
+it('synchronizes ConPTY dimensions and viewport surface when switching to a hidden or unfocused tab', async () => {
+  const widthSpy = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(960);
+  const heightSpy = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(540);
+  try {
+    state.nextFitSize = { cols: 120, rows: 34 };
+    const view = render(<XTermView sessionId="test" isActive={false} isVisible={false} />);
+    await waitFor(() => expect(ipc.startTerminalOutput).toHaveBeenCalled());
+    expect(ipc.resizeTerminal).not.toHaveBeenCalled();
+
+    view.rerender(<XTermView sessionId="test" isActive isVisible />);
+    expect(ipc.resizeTerminal).toHaveBeenCalledWith('test', 120, 34);
+    expect(state.terminals[0].queueSync).toHaveBeenCalled();
+    expect(state.terminals[0].refresh).toHaveBeenCalledWith(0, 33);
+    expect(state.terminals[0].focus).toHaveBeenCalled();
+
+    // Switching active focus onto an already-visible split pane after layout change also resizes ConPTY
+    ipc.resizeTerminal.mockClear();
+    view.rerender(<XTermView sessionId="test" isActive={false} isVisible />);
+    state.nextFitSize = { cols: 100, rows: 30 };
+    vi.useFakeTimers();
+    try {
+      view.rerender(<XTermView sessionId="test" isActive isVisible />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(25);
+      });
+      expect(ipc.resizeTerminal).toHaveBeenCalledWith('test', 100, 30);
+    } finally {
+      vi.useRealTimers();
+    }
+  } finally {
+    widthSpy.mockRestore();
+    heightSpy.mockRestore();
+  }
+});
+
+it('refreshes renderer surface on tab return even when cols and rows did not change', async () => {
+  const widthSpy = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(800);
+  const heightSpy = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(480);
+  try {
+    state.nextFitSize = { cols: 80, rows: 24 };
+    const view = render(<XTermView sessionId="test" isActive isVisible />);
+    await waitFor(() => expect(ipc.startTerminalOutput).toHaveBeenCalled());
+    expect(ipc.resizeTerminal).toHaveBeenCalledTimes(1);
+    expect(ipc.resizeTerminal).toHaveBeenCalledWith('test', 80, 24);
+
+    const term = state.terminals[0];
+    term.handleResize.mockClear();
+    term.queueSync.mockClear();
+    term.refresh.mockClear();
+    ipc.resizeTerminal.mockClear();
+
+    view.rerender(<XTermView sessionId="test" isActive={false} isVisible={false} />);
+    view.rerender(<XTermView sessionId="test" isActive isVisible />);
+
+    expect(ipc.resizeTerminal).not.toHaveBeenCalled();
+    expect(term.handleResize).toHaveBeenCalledWith(80, 24);
+    expect(term.queueSync).toHaveBeenCalled();
+    expect(term.refresh).toHaveBeenCalledWith(0, 23);
+  } finally {
+    widthSpy.mockRestore();
+    heightSpy.mockRestore();
+  }
+});
+
+it('keeps WebGL warm across tab switches up to the pool limit and evicts oldest hidden contexts', async () => {
+  const ids = ['t1', 't2', 't3', 't4', 't5', 't6', 't7'];
+  useTerminalStore.setState({ sessions: ids.map((id) => session(id)) });
+
+  const renderGroup = (activeId: string) => (
+    <>
+      {ids.map((id) => (
+        <XTermView key={id} sessionId={id} isActive={id === activeId} isVisible={id === activeId} />
+      ))}
+    </>
+  );
+
+  const view = render(renderGroup('t1'));
+  expect(state.webglAddons).toHaveLength(1);
+  expect(state.webglAddons[0].dispose).not.toHaveBeenCalled();
+
+  // Switching away to t2 keeps t1's WebGL context warm instead of tearing it down
+  view.rerender(renderGroup('t2'));
+  expect(state.webglAddons).toHaveLength(2);
+  expect(state.webglAddons[0].dispose).not.toHaveBeenCalled();
+
+  // Returning to t1 reuses its warm WebGL addon without creating a new instance
+  view.rerender(renderGroup('t1'));
+  expect(state.webglAddons).toHaveLength(2);
+
+  // Visiting t3..t7 exceeds the 6-context pool; t2 (least-recently-used hidden tab) is evicted, not t1
+  for (const id of ['t3', 't4', 't5', 't6', 't7']) {
+    view.rerender(renderGroup(id));
+  }
+  expect(state.webglAddons).toHaveLength(7);
+  expect(state.webglAddons[1].dispose).toHaveBeenCalledTimes(1);
+  expect(state.webglAddons[0].dispose).not.toHaveBeenCalled();
+
+  // Returning to evicted t2 allocates a fresh WebGL context and evicts the next oldest hidden tab (t1)
+  view.rerender(renderGroup('t2'));
+  expect(state.webglAddons).toHaveLength(8);
+  expect(state.webglAddons[0].dispose).toHaveBeenCalledTimes(1);
+
+  // Context loss cleans up the broken WebGL addon cleanly
+  act(() => {
+    state.webglAddons[7].triggerContextLoss();
+  });
+  expect(state.webglAddons[7].dispose).toHaveBeenCalledTimes(1);
 });

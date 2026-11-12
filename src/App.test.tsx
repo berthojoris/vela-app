@@ -143,3 +143,35 @@ it('follows a branch switch on window focus even while Git auto-check is OFF', a
   expect(useWorktreeStore.getState().worktrees[0].branch).toBe('feat/switched');
   expect(ipc.listWorktrees).not.toHaveBeenCalled();
 });
+
+it('keeps the terminal workspace laid out without display:none while viewing the Editor tab', async () => {
+  useWorktreeStore.setState(useWorktreeStore.getInitialState());
+  useTerminalStore.setState(useTerminalStore.getInitialState());
+  useDiffStore.setState(useDiffStore.getInitialState());
+  const doc = {
+    id: 'c:/repo/a.ts',
+    root: 'C:/repo',
+    path: 'a.ts',
+    content: 'x',
+    savedContent: 'x',
+    revision: 'v1',
+    line_ending: 'LF' as const,
+    has_bom: false,
+    saving: false,
+    error: null,
+  };
+  useEditorStore.setState({
+    ...useEditorStore.getInitialState(),
+    documents: [doc],
+    activeDocumentId: doc.id,
+    workspaceView: 'editor',
+  });
+
+  const view = render(<App />);
+  const hiddenWorkspace = view.container.querySelector('[aria-hidden="true"]') as HTMLElement | null;
+  expect(hiddenWorkspace).not.toBeNull();
+  expect(hiddenWorkspace!.classList.contains('hidden')).toBe(false);
+  expect(hiddenWorkspace!.classList.contains('invisible')).toBe(true);
+  expect(hiddenWorkspace!.classList.contains('pointer-events-none')).toBe(true);
+  expect(hiddenWorkspace!.hasAttribute('inert')).toBe(true);
+});
